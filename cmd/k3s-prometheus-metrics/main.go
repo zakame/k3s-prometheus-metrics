@@ -14,6 +14,7 @@ import (
 	"os"
 	"strings"
 
+	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -88,10 +89,12 @@ func main() {
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
 		LeaderElectionID:       "k3s-prometheus-metrics.zakame.github.io",
-		// Scope EndpointSlice to match role-endpoints.yaml's namespaced
-		// RBAC; the default cache watches every type cluster-wide.
+		// Scope Service and EndpointSlice to match role-endpoints.yaml's
+		// namespaced RBAC; the default cache watches every type
+		// cluster-wide.
 		Cache: cache.Options{
 			ByObject: map[client.Object]cache.ByObject{
+				&corev1.Service{}:            {Namespaces: map[string]cache.Config{namespace: {}}},
 				&discoveryv1.EndpointSlice{}: {Namespaces: map[string]cache.Config{namespace: {}}},
 			},
 		},
