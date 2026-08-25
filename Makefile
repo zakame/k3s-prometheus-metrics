@@ -7,10 +7,12 @@ CGO_ENABLED         ?= 0
 CONTROLLER_GEN_VERSION := v0.21.0
 RBAC_PATHS          := ./internal/controller/...
 RBAC_OUT            := deploy/standard
+ENVTEST_VERSION     := v0.24.1
+ENVTEST_K8S_VERSION := 1.36.2
 
 .DEFAULT_GOAL := help
 
-.PHONY: help build test cover lint vet fmt manifests docker-build run clean
+.PHONY: help build test test-integration cover lint vet fmt manifests docker-build run clean
 
 help: ## Show this help message
 	@echo "Usage: make <target>"
@@ -25,6 +27,10 @@ build: ## Compile the binary to ./bin/k3s-prometheus-metrics
 
 test: ## Run all tests
 	go test -v -count=1 ./...
+
+test-integration: ## Run envtest-backed integration tests (test/integration/, build tag integration)
+	KUBEBUILDER_ASSETS="$$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest@$(ENVTEST_VERSION) use $(ENVTEST_K8S_VERSION) -p path)" \
+		go test -tags integration -v -count=1 ./test/integration/...
 
 cover: ## Run tests with coverage report
 	go test -cover -coverpkg=./... -coverprofile=coverage.txt -covermode=atomic ./...
