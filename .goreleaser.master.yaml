@@ -1,0 +1,48 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+# vim: set ts=2 sw=2 tw=0 fo=cnqoj
+#
+# Builds and pushes a master-tagged container image only (no binaries/release).
+# Used by .github/workflows/master.yaml on every push to master.
+
+version: 2
+
+release:
+  disable: true
+
+before:
+  hooks:
+    - go mod tidy
+    - go vet ./...
+
+builds:
+  - env: [CGO_ENABLED=0]
+    goos:
+      - linux
+      - windows
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    main: ./cmd/k3s-prometheus-metrics
+
+kos:
+  - repositories: [ghcr.io/zakame/k3s-prometheus-metrics]
+    tags:
+      - "master"
+      - "{{.ShortCommit}}"
+    bare: true
+    preserve_import_paths: false
+    sbom: spdx
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    labels: &keys
+      "org.opencontainers.image.created": "{{.Date}}"
+      "org.opencontainers.image.title": "{{.ProjectName}}"
+      "org.opencontainers.image.revision": "{{.FullCommit}}"
+      "org.opencontainers.image.version": "{{.ShortCommit}}"
+      "org.opencontainers.image.authors": "Zak B. Elep https://github.com/zakame"
+      "org.opencontainers.image.source": "https://github.com/zakame/k3s-prometheus-metrics"
+      "org.opencontainers.image.url": "https://github.com/zakame/k3s-prometheus-metrics/pkgs/container/k3s-prometheus-metrics"
+      "org.opencontainers.image.description": "EndpointSlice controller exposing k3s control-plane metrics endpoints for Prometheus"
+    annotations: *keys

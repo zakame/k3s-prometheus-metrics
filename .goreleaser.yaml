@@ -1,0 +1,71 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+# vim: set ts=2 sw=2 tw=0 fo=cnqoj
+
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+    - go vet ./...
+
+builds:
+  - env: [CGO_ENABLED=0]
+    goos:
+      - linux
+      - windows
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    main: ./cmd/k3s-prometheus-metrics
+
+kos:
+  - repositories: [ghcr.io/zakame/k3s-prometheus-metrics]
+    tags:
+      - "{{.Version}}"
+      - "master"
+    bare: true
+    preserve_import_paths: false
+    sbom: spdx
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    labels: &keys
+      "org.opencontainers.image.created": "{{.Date}}"
+      "org.opencontainers.image.title": "{{.ProjectName}}"
+      "org.opencontainers.image.revision": "{{.FullCommit}}"
+      "org.opencontainers.image.version": "{{.Version}}"
+      "org.opencontainers.image.authors": "Zak B. Elep https://github.com/zakame"
+      "org.opencontainers.image.source": "https://github.com/zakame/k3s-prometheus-metrics"
+      "org.opencontainers.image.url": "https://github.com/zakame/k3s-prometheus-metrics/pkgs/container/k3s-prometheus-metrics"
+      "org.opencontainers.image.description": "EndpointSlice controller exposing k3s control-plane metrics endpoints for Prometheus"
+    annotations: *keys
+
+archives:
+  - formats: [tar.gz]
+    # this name template makes the OS and Arch compatible with the results of `uname`.
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
+    # use zip for windows archives
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+
+release:
+  footer: >-
+
+    ---
+
+    Released by [GoReleaser](https://github.com/goreleaser/goreleaser).
