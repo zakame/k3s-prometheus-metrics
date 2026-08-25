@@ -6,6 +6,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"reflect"
 
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
@@ -137,10 +138,13 @@ func (r *NodeReconciler) SetupWithManager(mgr ctrl.Manager) error {
 }
 
 // nodeChangedPredicate lets Create and Delete events through unfiltered,
-// but only lets an Update event through when the node's schedulability or
-// Ready condition changed -- the two inputs to isReady() in
-// internal/endpoints. Any other field change (e.g. heartbeat timestamps,
-// resource capacity) is ignored.
+// but only lets an Update event through when the node's schedulability,
+// Ready condition, or labels changed -- the inputs to isReady() in
+// internal/endpoints, plus labels because Reconcile lists nodes via
+// client.MatchingLabels(Config.NodeSelector): relabeling a node to add or
+// remove the control-plane role must trigger a reconcile even though
+// neither Unschedulable nor Ready changed. Any other field change (e.g.
+// heartbeat timestamps, resource capacity) is ignored.
 var nodeChangedPredicate = predicate.Funcs{
 	UpdateFunc: func(e event.UpdateEvent) bool {
 		oldNode, okOld := e.ObjectOld.(*corev1.Node)
@@ -149,7 +153,8 @@ var nodeChangedPredicate = predicate.Funcs{
 			return true
 		}
 		return oldNode.Spec.Unschedulable != newNode.Spec.Unschedulable ||
-			nodeReadyStatus(oldNode) != nodeReadyStatus(newNode)
+			nodeReadyStatus(oldNode) != nodeReadyStatus(newNode) ||
+			!reflect.DeepEqual(oldNode.Labels, newNode.Labels)
 	},
 }
 
