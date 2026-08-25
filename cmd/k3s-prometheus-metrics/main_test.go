@@ -3,6 +3,7 @@ package main
 import (
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -27,5 +28,43 @@ func TestNodeSelectorFlagDefault_MatchesK3sConvention(t *testing.T) {
 	wantDefault := `(default "` + wantNodeSelectorDefault + `")`
 	if !strings.Contains(string(out), wantDefault) {
 		t.Fatalf("expected --node-selector default %s in -h output, got:\n%s", wantDefault, out)
+	}
+}
+
+func TestParseSelector(t *testing.T) {
+	tests := []struct {
+		name    string
+		in      string
+		want    map[string]string
+		wantErr bool
+	}{
+		{name: "empty string returns nil map", in: "", want: nil},
+		{name: "single pair", in: "a=b", want: map[string]string{"a": "b"}},
+		{name: "multiple pairs", in: "a=b,c=d", want: map[string]string{"a": "b", "c": "d"}},
+		{name: "k3s default selector", in: wantNodeSelectorDefault, want: map[string]string{"node-role.kubernetes.io/control-plane": "true"}},
+		{name: "kubeadm-style empty value", in: "node-role.kubernetes.io/control-plane=", want: map[string]string{"node-role.kubernetes.io/control-plane": ""}},
+		{name: "duplicate key last one wins", in: "a=b,a=c", want: map[string]string{"a": "c"}},
+		{name: "value containing equals sign", in: "a=b=c", want: map[string]string{"a": "b=c"}},
+		{name: "missing equals sign errors", in: "a", wantErr: true},
+		{name: "one good pair one bad segment errors", in: "a=b,c", wantErr: true},
+		{name: "trailing comma yields empty segment error", in: "a=b,", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseSelector(tt.in)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("parseSelector(%q): expected an error, got nil (map: %v)", tt.in, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseSelector(%q): unexpected error: %v", tt.in, err)
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("parseSelector(%q) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
 	}
 }
