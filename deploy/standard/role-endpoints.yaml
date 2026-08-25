@@ -19,5 +19,5 @@ rules:
   resources: ["endpointslices"]
   verbs: ["get", "list", "watch", "create", "update", "patch"]
 - apiGroups: [""]
-  resources: ["endpoints"]
+  resources: ["endpoints", "services"]
   verbs: ["get", "list", "watch", "create", "update", "patch"]

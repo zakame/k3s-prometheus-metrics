@@ -11,5 +11,4 @@ resources:
 - role-leader-election.yaml
 - rolebinding-leader-election.yaml
 - deployment.yaml
-- control-plane-services.yaml
 - servicemonitor.yaml
