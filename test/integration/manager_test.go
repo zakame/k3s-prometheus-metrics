@@ -56,6 +56,7 @@ func TestManager_ImpersonatedShippedRBAC_DrivesEndpointSliceViaWatch(t *testing.
 		// Mirrors cmd/k3s-prometheus-metrics's production Cache scoping.
 		Cache: cache.Options{
 			ByObject: map[client.Object]cache.ByObject{
+				&corev1.Service{}:            {Namespaces: map[string]cache.Config{rbacNamespace: {}}},
 				&discoveryv1.EndpointSlice{}: {Namespaces: map[string]cache.Config{rbacNamespace: {}}},
 			},
 		},

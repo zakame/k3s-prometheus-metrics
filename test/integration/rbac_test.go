@@ -296,6 +296,95 @@ func TestRBAC_MissingListOnNodes_ReconcileFailsForbidden(t *testing.T) {
 	}
 }
 
+// TestRBAC_MissingServicesVerb_ReconcileFailsForbidden proves the "services"
+// entry added to role-endpoints.yaml's namespaced rule is load-bearing on
+// its own -- not merely redundant with the endpoints/endpointslices verbs
+// already granted there.
+func TestRBAC_MissingServicesVerb_ReconcileFailsForbidden(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), reconcileTimeout)
+	defer cancel()
+
+	applyShippedRBAC(t, ctx)
+
+	id := testID(t)
+	saName := "sa-no-services-" + id
+	sa := &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: saName, Namespace: "monitoring"}}
+	if err := k8sClient.Create(ctx, sa); err != nil {
+		t.Fatalf("creating service account: %v", err)
+	}
+	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), sa) })
+
+	// Same as role.yaml's node rule, granted in full so the only broken
+	// permission is services.
+	crName := "nodes-full-" + id
+	cr := &rbacv1.ClusterRole{
+		ObjectMeta: metav1.ObjectMeta{Name: crName},
+		Rules: []rbacv1.PolicyRule{
+			{APIGroups: []string{""}, Resources: []string{"nodes"}, Verbs: []string{"get", "list", "watch"}},
+		},
+	}
+	if err := k8sClient.Create(ctx, cr); err != nil {
+		t.Fatalf("creating cluster role: %v", err)
+	}
+	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), cr) })
+	crb := &rbacv1.ClusterRoleBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: crName},
+		RoleRef:    rbacv1.RoleRef{APIGroup: "rbac.authorization.k8s.io", Kind: "ClusterRole", Name: cr.Name},
+		Subjects:   []rbacv1.Subject{{Kind: "ServiceAccount", Name: saName, Namespace: "monitoring"}},
+	}
+	if err := k8sClient.Create(ctx, crb); err != nil {
+		t.Fatalf("creating cluster role binding: %v", err)
+	}
+	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), crb) })
+
+	// Same as role-endpoints.yaml's namespaced rule, minus "services".
+	roleName := "endpoints-no-services-" + id
+	role := &rbacv1.Role{
+		ObjectMeta: metav1.ObjectMeta{Name: roleName, Namespace: "kube-system"},
+		Rules: []rbacv1.PolicyRule{
+			{APIGroups: []string{"discovery.k8s.io"}, Resources: []string{"endpointslices"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch"}},
+			{APIGroups: []string{""}, Resources: []string{"endpoints"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch"}},
+		},
+	}
+	if err := k8sClient.Create(ctx, role); err != nil {
+		t.Fatalf("creating role: %v", err)
+	}
+	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), role) })
+	rb := &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: roleName, Namespace: "kube-system"},
+		RoleRef:    rbacv1.RoleRef{APIGroup: "rbac.authorization.k8s.io", Kind: "Role", Name: role.Name},
+		Subjects:   []rbacv1.Subject{{Kind: "ServiceAccount", Name: saName, Namespace: "monitoring"}},
+	}
+	if err := k8sClient.Create(ctx, rb); err != nil {
+		t.Fatalf("creating role binding: %v", err)
+	}
+	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), rb) })
+
+	cpLabel := map[string]string{"role-" + id: "control-plane"}
+	createNode(t, ctx, "n1-"+id, "10.23.0.1", true, withExtraLabels(cpLabel))
+
+	userName, groups := saUser("monitoring", saName)
+	restricted := impersonatedClient(t, userName, groups...)
+
+	r := &controller.NodeReconciler{
+		Client: restricted,
+		Config: config.Config{
+			Namespace:    "kube-system",
+			NodeSelector: cpLabel,
+			Services: []config.Service{
+				{Name: id, PortName: "metrics", Port: 9999, Protocol: corev1.ProtocolTCP, AppProtocol: "http"},
+			},
+		},
+	}
+	_, err := r.Reconcile(ctx, ctrl.Request{})
+	if err == nil {
+		t.Fatal("expected reconcile to fail once the services verb is removed, even though endpoints/endpointslices access remains")
+	}
+	if !apierrors.IsForbidden(err) {
+		t.Fatalf("expected a Forbidden error, got: %v", err)
+	}
+}
+
 // --- events RBAC (leader-election recorder) --------------------------------
 //
 // Reconcile() never touches events; only the leader-election recorder does

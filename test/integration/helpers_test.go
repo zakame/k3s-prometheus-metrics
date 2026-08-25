@@ -157,6 +157,30 @@ func getEndpointSliceErr(ctx context.Context, name string) error {
 	return getEndpointSliceErrIn(ctx, testNamespace, name)
 }
 
+func getServiceIn(t *testing.T, ctx context.Context, namespace, name string) *corev1.Service {
+	t.Helper()
+	var svc corev1.Service
+	if err := k8sClient.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, &svc); err != nil {
+		t.Fatalf("getting Service %s/%s: %v", namespace, name, err)
+	}
+	t.Cleanup(func() {
+		_ = k8sClient.Delete(context.Background(), &corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
+		})
+	})
+	return &svc
+}
+
+func getService(t *testing.T, ctx context.Context, name string) *corev1.Service {
+	t.Helper()
+	return getServiceIn(t, ctx, testNamespace, name)
+}
+
+func getServiceErrIn(ctx context.Context, namespace, name string) error {
+	var svc corev1.Service
+	return k8sClient.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, &svc)
+}
+
 func getLegacyEndpointsIn(t *testing.T, ctx context.Context, namespace, name string) *corev1.Endpoints { //nolint:staticcheck
 	t.Helper()
 	var eps corev1.Endpoints //nolint:staticcheck

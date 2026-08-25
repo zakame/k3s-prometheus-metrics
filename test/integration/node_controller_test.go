@@ -124,6 +124,11 @@ func TestReconcile_NodeSelectorExcludesNonMatchingNodes(t *testing.T) {
 	}
 }
 
+// TestReconcile_NoMatchingNodes_NoEndpointSliceCreated also proves the
+// Services themselves are NOT gated on any node currently matching the
+// selector: applyServices runs unconditionally, since a ServiceMonitor
+// targets the Service independent of whether a control-plane node happens
+// to be present right now.
 func TestReconcile_NoMatchingNodes_NoEndpointSliceCreated(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), reconcileTimeout)
 	defer cancel()
@@ -133,11 +138,19 @@ func TestReconcile_NoMatchingNodes_NoEndpointSliceCreated(t *testing.T) {
 	// A node exists, but none carry the selector label.
 	createNode(t, ctx, "worker-"+id, "10.5.0.1", true)
 
-	cfg := svcConfig(id, cpLabel)
+	cfg := config.Config{
+		Namespace:    testNamespace,
+		NodeSelector: cpLabel,
+		Services:     config.DefaultServices,
+	}
 	reconcile(t, ctx, cfg)
 
-	if err := getEndpointSliceErr(ctx, id+"-metrics"); !isNotFound(err) {
+	if err := getEndpointSliceErr(ctx, "kube-scheduler-metrics"); !isNotFound(err) {
 		t.Fatalf("expected no EndpointSlice to be created, got err=%v", err)
+	}
+
+	for _, svc := range config.DefaultServices {
+		_ = getService(t, ctx, svc.Name) // must exist despite zero matching nodes
 	}
 }
 
