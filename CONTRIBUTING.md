@@ -38,7 +38,20 @@ without needing a separate type taxonomy.
 
 ## Before opening a pull request
 
-- Run `make build` and `make test` and make sure they pass.
+Run the same checks CI runs on every pull request, and make sure they pass:
+
+- `make build`, `make vet`, `make fmt`, and `make lint` (falls back to
+  `go vet` if `golangci-lint` isn't installed locally).
+- `make test` (unit tests).
+- `make test-integration` (envtest-backed reconciler/RBAC tests in
+  `test/integration/`; downloads a pinned `kube-apiserver`/`etcd` via
+  `setup-envtest` on first run).
+- Validate manifests build cleanly, e.g.
+  `go run sigs.k8s.io/kustomize/kustomize/v5@v5.8.1 build deploy/standard | kubectl apply --dry-run=client --validate=true -f -`
+  (and the same for `deploy/dev`) if you touched anything under `deploy/`.
+
+Also:
+
 - Keep commits scoped as above; do not squash unrelated changes together.
 - Update relevant documentation (`README.md`, manifests under `deploy/`,
   etc.) in the same pull request as the code change it describes.

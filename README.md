@@ -76,33 +76,41 @@ and organized as:
 - `cmd/k3s-prometheus-metrics/`: entrypoint, manager wiring, leader
   election, and CLI flags
 - `internal/controller/`: the Node watcher/reconciler. Reacts to Node
-  add/update/delete events and readiness changes, and drives
-  EndpointSlice/Endpoints objects to match current control-plane node state.
-- `internal/endpoints/`: pure, unit-testable builder functions that turn a
-  set of control-plane nodes into `discovery.k8s.io/v1` EndpointSlice
-  objects (and, optionally, legacy `v1` Endpoints). Nodes are split by
-  their InternalIP's address family, so a dual-stack cluster gets a
-  separate `<service>-metrics-ipv6` EndpointSlice alongside the IPv4 one,
+  add/update/delete events and readiness changes, and drives Service,
+  EndpointSlice, and (optionally) Endpoints objects to match current
+  control-plane node state, setting a controller `ownerReference` from each
+  EndpointSlice/Endpoints back to its Service so deleting the Service
+  garbage-collects the rest.
+- `internal/endpoints/`: pure, unit-testable builder functions that turn
+  `internal/config`'s service table into selector-less Service objects, and
+  a set of control-plane nodes into matching `discovery.k8s.io/v1`
+  EndpointSlice objects (and, optionally, legacy `v1` Endpoints). Nodes are
+  split by their InternalIP's address family, so a dual-stack cluster gets
+  a separate `<service>-metrics-ipv6` EndpointSlice alongside the IPv4 one,
   since a single EndpointSlice's `AddressType` can't mix families.
 - `internal/config/`: the static table of watched services and their
   metrics ports (kube-scheduler, kube-proxy, kube-controller-manager)
 - `deploy/standard/`: sample manifests (namespace, RBAC, ServiceAccount,
   Deployment, ServiceMonitor, kustomization) for deploying the controller
   alongside a kube-prometheus/kube-prometheus-stack install
+- `test/integration/`: envtest-backed tests that exercise the reconciler
+  and RBAC manifests against a real (if ephemeral) `kube-apiserver`,
+  complementing the unit tests under `internal/`. Run with `make
+  test-integration`.
 
-### Where the EndpointSlice/Endpoints objects live
+### Where the Service/EndpointSlice/Endpoints objects live
 
 The controller Deployment itself runs wherever you place it (e.g. a
-`monitoring` namespace), but the EndpointSlice/Endpoints objects it manages
-are created in **`kube-system`**, not the controller's own namespace. That
-matches upstream kubeadm clusters, where kube-prometheus and
-kube-prometheus-stack's bundled ServiceMonitors already expect to find
+`monitoring` namespace), but the Service, EndpointSlice, and Endpoints
+objects it manages are created in **`kube-system`**, not the controller's
+own namespace. That matches upstream kubeadm clusters, where kube-prometheus
+and kube-prometheus-stack's bundled ServiceMonitors already expect to find
 `kube-scheduler`, `kube-proxy`, and `kube-controller-manager` Services in
-`kube-system`. The sample manifests in `deploy/standard/` include static
-(selector-less) Service objects for those three names in `kube-system`,
-paired with this controller's dynamically-managed EndpointSlices, so
-existing kube-prometheus/kube-prometheus-stack ServiceMonitors pick up the
-targets with no relabeling changes.
+`kube-system`. The controller creates and owns those selector-less Services
+itself, alongside the EndpointSlices (and, if enabled, Endpoints) it points
+at them, so existing kube-prometheus/kube-prometheus-stack ServiceMonitors
+pick up the targets with no relabeling changes and no separate manifest to
+apply for the Services.
 
 ## Installation
 
@@ -135,17 +143,18 @@ useful for testing against a real cluster before deploying in-cluster.
 ## Usage
 
 The controller needs a `ServiceAccount` with permission to list/watch
-Nodes and create/update EndpointSlices (and, if `--write-legacy-endpoints`
-is set, Endpoints). See [Kubernetes Deployment](#kubernetes-deployment)
-below for the RBAC this requires. Once running, it reconciles continuously.
-No scheduling flag is needed to make it re-check node state periodically,
-since it watches Node objects directly.
+Nodes and create/update Services and EndpointSlices (and, if
+`--write-legacy-endpoints` is set, Endpoints). See [Kubernetes
+Deployment](#kubernetes-deployment) below for the RBAC this requires. Once
+running, it reconciles continuously. No scheduling flag is needed to make
+it re-check node state periodically, since it watches Node objects
+directly.
 
 ### CLI Flags
 
 | Flag | Default | Description |
 |------|---------|--------------|
-| `--namespace` | `kube-system` | Namespace to create/update EndpointSlice (and, if enabled, Endpoints) objects in. Independent of the namespace the controller itself is deployed in. |
+| `--namespace` | `kube-system` | Namespace to create/update Service, EndpointSlice (and, if enabled, Endpoints) objects in. Independent of the namespace the controller itself is deployed in. |
 | `--node-selector` | `node-role.kubernetes.io/control-plane=true` | Comma-separated `key=value` node label selector identifying control-plane nodes. k3s sets this label to `true`; a kubeadm cluster would use an empty value instead. |
 | `--write-legacy-endpoints` | `false` | Also create/update legacy `v1` Endpoints objects, for Kubernetes clusters older than 1.33. |
 | `--metrics-bind-address` | `:8080` | Address the controller's own Prometheus metrics endpoint binds to. |
@@ -166,16 +175,37 @@ Sample manifests are available in [`deploy/standard/`](deploy/standard/):
   `ServiceAccount` and least-privilege RBAC the controller needs (see below)
 - `deployment.yaml`: the controller Deployment itself, scheduled onto
   control-plane nodes with `--leader-elect` enabled
-- `control-plane-services.yaml`: static, selector-less `Service` objects
-  for `kube-scheduler`, `kube-controller-manager`, and `kube-proxy` in
-  `kube-system`, so the controller's EndpointSlices have a Service to back
-- `servicemonitor.yaml`: `ServiceMonitor` objects wiring those Services
-  into a Prometheus Operator setup (see below)
+- `servicemonitor.yaml`: `ServiceMonitor` objects wiring the
+  controller-managed Services into a Prometheus Operator setup (see below)
 - `kustomization.yaml`: ties the above together
 
 ```bash
 kubectl apply -k deploy/standard/
 ```
+
+The `kube-scheduler`, `kube-controller-manager`, and `kube-proxy` Service
+objects themselves aren't part of these manifests: the controller creates
+and owns them on first reconcile (see [Architecture](#architecture) above).
+
+### Local/dev testing: `deploy/dev/`
+
+[`deploy/dev/`](deploy/dev/) is a Kustomize overlay on top of
+`deploy/standard/` for iterating against your own image on a private
+registry, and for testing on a cluster that doesn't have the Prometheus
+Operator's `ServiceMonitor` CRD installed at all: it patches out
+`servicemonitor.yaml`'s three `ServiceMonitor` objects and `namespace.yaml`
+(so it also won't fight a `monitoring` Namespace already managed by a live
+kube-prometheus-stack install). Point it at your own image, then apply:
+
+```bash
+make dev-image IMAGE=registry.example.com/k3s-prometheus-metrics TAG=dev
+kubectl apply -k deploy/dev/
+```
+
+`make dev-image` rewrites the `images:` override in
+`deploy/dev/kustomization.yaml` in place; leave the checked-in
+`CHANGE-ME/k3s-prometheus-metrics` placeholder there rather than committing
+your own registry.
 
 ### Port names and existing kube-prometheus ServiceMonitors
 
@@ -189,11 +219,11 @@ ServiceMonitors exactly (same port name, bearer-token auth, skip-verify TLS,
 and separate `/metrics/slis` scrape). **If your cluster already runs
 kube-prometheus's bundled control-plane ServiceMonitors, you likely don't
 need `servicemonitor.yaml`'s kube-scheduler/kube-controller-manager entries
-at all.** Just the Service and EndpointSlice from
-`control-plane-services.yaml` are enough for kube-prometheus's existing
-ServiceMonitors to start matching. `deploy/standard/servicemonitor.yaml`
-provides equivalent ServiceMonitors for kube-prometheus-stack users, or
-anyone not already running kube-prometheus's stock ones.
+at all.** The Service and EndpointSlice this controller creates are enough
+on their own for kube-prometheus's existing ServiceMonitors to start
+matching. `servicemonitor.yaml` provides equivalent ServiceMonitors for
+kube-prometheus-stack users, or anyone not already running kube-prometheus's
+stock ones.
 
 kube-proxy has **no upstream kube-prometheus ServiceMonitor at all**. Its
 metrics port is unauthenticated plain HTTP rather than HTTPS with delegated
@@ -228,26 +258,29 @@ access it needs rather than one broad grant:
 - `role-endpoints.yaml` + `rolebinding-endpoints.yaml`: a namespaced
   `Role`/`RoleBinding` **in `kube-system`** (matching the `--namespace`
   default) granting `get`, `list`, `watch`, `create`, `update`, `patch` on
-  `discovery.k8s.io` `endpointslices` and core `endpoints`. If you change
-  `--namespace`, this Role and RoleBinding must move to that namespace too.
-  Hand-maintained rather than generated, since controller-gen only
-  produces one ClusterRole from all markers and can't express "cluster-wide
-  read, namespace-scoped write" as separate namespaced roles.
+  `discovery.k8s.io` `endpointslices` and core `endpoints`/`services` (the
+  latter for the selector-less Services the controller now creates and
+  owns itself). If you change `--namespace`, this Role and RoleBinding must
+  move to that namespace too. Hand-maintained rather than generated, since
+  controller-gen only produces one ClusterRole from all markers and can't
+  express "cluster-wide read, namespace-scoped write" as separate
+  namespaced roles.
 - `role-leader-election.yaml` + `rolebinding-leader-election.yaml`: a
   namespaced `Role`/`RoleBinding` **in `monitoring`** (the controller's own
   namespace) granting access to `coordination.k8s.io` `leases`, needed
   because `--leader-elect` coordinates via a Lease in the pod's own
-  namespace.
+  namespace, plus `create`/`patch` on core `events`, since leadership
+  changes record Events against that Lease.
 
 The net effect: a compromised controller pod can read Nodes cluster-wide,
-but can only create/modify EndpointSlices, Endpoints, or Leases in the two
-specific namespaces it actually needs. Not cluster-wide, and not in any
-other namespace.
+but can only create/modify Services, EndpointSlices, Endpoints, or Leases
+in the two specific namespaces it actually needs. Not cluster-wide, and
+not in any other namespace.
 
 ### Verifying Prometheus is scraping the new targets
 
-Once the controller is running and the static Services in
-`control-plane-services.yaml` are applied:
+Once the controller is running and has reconciled at least once (it creates
+the Services itself; there's no separate manifest to apply for them):
 
 ```bash
 kubectl get endpointslices -n kube-system -l endpointslice.kubernetes.io/managed-by=k3s-prometheus-metrics
