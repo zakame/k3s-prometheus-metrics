@@ -2,20 +2,16 @@ package endpoints
 
 import (
 	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/zakame/k3s-prometheus-metrics/internal/config"
 )
 
 // BuildEndpoints turns nodes into one legacy v1 Endpoints object per
-// service in cfg.Services, in cfg.Namespace, for Kubernetes clusters older
-// than 1.33 that may not yet universally consume EndpointSlices. Only
-// nodes considered ready (see isReady) are included: unlike EndpointSlice,
-// v1 Endpoints has no per-address Ready condition, so a not-ready node can
-// only be represented via NotReadyAddresses, which most legacy consumers
-// (including older Prometheus relabeling configs) do not scrape by
-// default -- keeping ready and not-ready nodes in the same subset split
-// mirrors that expectation.
+// service, for Kubernetes clusters older than 1.33. v1 Endpoints has no
+// per-address Ready condition, so not-ready nodes go in NotReadyAddresses
+// instead, which most legacy consumers don't scrape by default.
 func BuildEndpoints(nodes []corev1.Node, cfg config.Config) []corev1.Endpoints { //nolint:staticcheck // SA1019: intentional legacy support for Kubernetes <1.33
 	var ready, notReady []corev1.EndpointAddress
 	for i := range nodes {
@@ -44,8 +40,12 @@ func BuildEndpoints(nodes []corev1.Node, cfg config.Config) []corev1.Endpoints {
 				Name:      svc.Name,
 				Namespace: cfg.Namespace,
 				Labels: map[string]string{
-					"kubernetes.io/service-name":   svc.Name,
+					discoveryv1.LabelServiceName:   svc.Name,
 					"app.kubernetes.io/managed-by": ManagedByValue,
+					// Without this, kube-controller-manager's
+					// EndpointSliceMirroring controller duplicates this
+					// into a second, conflicting EndpointSlice.
+					discoveryv1.LabelSkipMirror: "true",
 				},
 			},
 			Subsets: []corev1.EndpointSubset{{
