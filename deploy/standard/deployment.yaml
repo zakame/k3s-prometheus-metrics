@@ -1,0 +1,68 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: k3s-prometheus-metrics
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: k3s-prometheus-metrics
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: k3s-prometheus-metrics
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: k3s-prometheus-metrics
+    spec:
+      serviceAccountName: k3s-prometheus-metrics
+      # Control-plane-only by default: this controller has nothing useful
+      # to do on worker nodes, and running on a control-plane node lets it
+      # keep working even if worker capacity is scarce.
+      tolerations:
+      - key: node-role.kubernetes.io/control-plane
+        operator: Exists
+        effect: NoSchedule
+      # k3s sets this label to "true"; kubeadm leaves it empty.
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: "true"
+      containers:
+      - name: controller
+        image: ghcr.io/zakame/k3s-prometheus-metrics:latest
+        args:
+        - --leader-elect
+        # Uncomment to also maintain legacy v1 Endpoints objects for
+        # Kubernetes clusters older than 1.33:
+        # - --write-legacy-endpoints
+        ports:
+        - name: metrics
+          containerPort: 8080
+        - name: probes
+          containerPort: 8081
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: probes
+          initialDelaySeconds: 5
+          periodSeconds: 15
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: probes
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: 10m
+            memory: 32Mi
+          limits:
+            memory: 64Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          # gcr.io/distroless/static-debian12:nonroot's baked-in UID/GID.
+          runAsUser: 65532
+          runAsGroup: 65532
+          capabilities:
+            drop: ["ALL"]

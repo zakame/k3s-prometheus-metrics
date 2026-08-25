@@ -1,0 +1,51 @@
+# Static, selector-less Services for the k3s-bundled control-plane
+# components this controller exposes. k3s does not create these itself
+# (see https://github.com/k3s-io/k3s/issues/3619); a real Service, once
+# defined, only needs its EndpointSlice kept in sync with cluster state --
+# which is what the controller does. Names, namespace, and port names here
+# must match internal/config.DefaultServices and the labels the controller
+# writes onto its EndpointSlices (kubernetes.io/service-name).
+apiVersion: v1
+kind: Service
+metadata:
+  name: kube-scheduler
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: kube-scheduler
+    k8s-app: kube-scheduler
+spec:
+  clusterIP: None
+  ports:
+  - name: https-metrics
+    port: 10259
+    protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kube-controller-manager
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: kube-controller-manager
+    k8s-app: kube-controller-manager
+spec:
+  clusterIP: None
+  ports:
+  - name: https-metrics
+    port: 10257
+    protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kube-proxy
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: kube-proxy
+    k8s-app: kube-proxy
+spec:
+  clusterIP: None
+  ports:
+  - name: http-metrics
+    port: 10249
+    protocol: TCP

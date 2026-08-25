@@ -1,0 +1,22 @@
+# Bound cluster-wide because Node objects are cluster-scoped (the
+# controller must list/watch all nodes to find control-plane members).
+# The EndpointSlice/Endpoints permissions this ClusterRole also grants are
+# broader than strictly needed (any namespace, not just the configured
+# --namespace target) -- controller-gen generates a single ClusterRole from
+# all +kubebuilder:rbac markers in internal/controller, and splitting node
+# access (cluster-scoped) from endpoints/endpointslices access
+# (namespace-scoped) would need two roles for one controller. The
+# controller itself only ever writes to its configured --namespace
+# (default kube-system).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: k3s-prometheus-metrics
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: k3s-prometheus-metrics
+subjects:
+- kind: ServiceAccount
+  name: k3s-prometheus-metrics
+  namespace: monitoring

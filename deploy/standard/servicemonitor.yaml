@@ -1,0 +1,101 @@
+# kube-scheduler and kube-controller-manager endpoints mirror
+# prometheus-operator/kube-prometheus's own
+# kubernetesControlPlane-serviceMonitorKube{Scheduler,ControllerManager}.yaml
+# exactly (port name "https-metrics", bearerTokenFile +
+# tlsConfig.insecureSkipVerify, and the separate /metrics/slis scrape) --
+# so if your kube-prometheus install already ships those ServiceMonitors,
+# you likely don't need this file for those two components at all; it's
+# provided for kube-prometheus-stack users, or anyone not already running
+# kube-prometheus's stock control-plane ServiceMonitors.
+#
+# The scraping Prometheus's ServiceAccount must be authorized for
+# `nonResourceURLs: ["/metrics", "/metrics/slis"]` (verb "get") to read the
+# secured kube-scheduler/kube-controller-manager endpoints -- both
+# kube-prometheus's `prometheus-k8s` ClusterRole and kube-prometheus-stack's
+# default Prometheus ClusterRole already grant this.
+#
+# kube-proxy has no equivalent upstream kube-prometheus ServiceMonitor (its
+# metrics port is unauthenticated plain HTTP, not HTTPS + delegated authz,
+# so it doesn't fit the scheduler/KCM pattern) -- this project defines its
+# own for it below.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: kube-scheduler
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: k3s-prometheus-metrics
+spec:
+  namespaceSelector:
+    matchNames: ["kube-system"]
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: kube-scheduler
+  endpoints:
+  - port: https-metrics
+    scheme: https
+    interval: 30s
+    bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+    tlsConfig:
+      insecureSkipVerify: true
+  - port: https-metrics
+    scheme: https
+    path: /metrics/slis
+    interval: 5s
+    bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+    tlsConfig:
+      insecureSkipVerify: true
+    metricRelabelings:
+    - action: drop
+      sourceLabels: [__name__]
+      regex: process_start_time_seconds
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: kube-controller-manager
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: k3s-prometheus-metrics
+spec:
+  namespaceSelector:
+    matchNames: ["kube-system"]
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: kube-controller-manager
+  endpoints:
+  - port: https-metrics
+    scheme: https
+    interval: 30s
+    bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+    tlsConfig:
+      insecureSkipVerify: true
+  - port: https-metrics
+    scheme: https
+    path: /metrics/slis
+    interval: 5s
+    bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+    tlsConfig:
+      insecureSkipVerify: true
+    metricRelabelings:
+    - action: drop
+      sourceLabels: [__name__]
+      regex: process_start_time_seconds
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: kube-proxy
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: k3s-prometheus-metrics
+spec:
+  namespaceSelector:
+    matchNames: ["kube-system"]
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: kube-proxy
+  endpoints:
+  - port: http-metrics
+    scheme: http
+    interval: 30s

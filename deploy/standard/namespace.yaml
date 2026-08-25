@@ -1,0 +1,8 @@
+# The controller Deployment runs in the "monitoring" namespace, alongside
+# a kube-prometheus / kube-prometheus-stack install. Applying this is
+# idempotent -- if you already have a "monitoring" namespace (e.g. created
+# by the kube-prometheus-stack Helm chart), kubectl apply will no-op here.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
