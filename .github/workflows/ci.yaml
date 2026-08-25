@@ -1,0 +1,64 @@
+name: CI
+
+on: pull_request
+
+concurrency:
+  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.ref }}
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        go-version-file: go.mod
+    - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+      with:
+        version: v2.11.3
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        go-version-file: go.mod
+    - # gotestsum v0.13.0
+      run: >-
+        go run gotest.tools/gotestsum@c4a0df2e75a225d979a444342dd3db752b53619f
+        --jsonfile unit-tests.json
+        --format testdox
+        --
+        -v -cover -coverpkg=./... -coverprofile=coverage.txt -covermode=atomic
+        -timeout 20m ./...
+    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: test-results
+        path: unit-tests.json
+      if: ${{ !cancelled() }}
+
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - id: has-e2e
+      # Skip cleanly until test/e2e exists, so early PRs aren't blocked
+      # on a suite that hasn't been written yet.
+      run: |
+        if [ -d test/e2e ]; then
+          echo "present=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "present=false" >> "$GITHUB_OUTPUT"
+        fi
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      if: steps.has-e2e.outputs.present == 'true'
+      with:
+        go-version-file: go.mod
+    - uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc # v1.14.0
+      if: steps.has-e2e.outputs.present == 'true'
+      with:
+        cluster_name: k3s-prometheus-metrics
+    - if: steps.has-e2e.outputs.present == 'true'
+      run: go test -tags e2e -v -timeout 20m ./test/e2e/...
