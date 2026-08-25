@@ -10,17 +10,28 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	"github.com/zakame/k3s-prometheus-metrics/internal/config"
 	"github.com/zakame/k3s-prometheus-metrics/internal/endpoints"
 )
 
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
-// +kubebuilder:rbac:groups=discovery.k8s.io,resources=endpointslices,verbs=get;list;watch;create;update;patch
-// +kubebuilder:rbac:groups="",resources=endpoints,verbs=get;list;watch;create;update;patch
+//
+// The reconciler also needs create;get;list;patch;update;watch on
+// discovery.k8s.io/endpointslices and (when --write-legacy-endpoints is
+// set) on "" /endpoints -- both namespace-scoped to Config.Namespace, not
+// cluster-wide like the nodes rule above. These are intentionally NOT
+// +kubebuilder:rbac markers: controller-gen's RBAC generator always emits
+// a single ClusterRole, which would grant those namespaced verbs
+// cluster-wide (every namespace) rather than just Config.Namespace. See
+// deploy/standard/role-endpoints.yaml (hand-maintained, matching this
+// comment) for the actual least-privilege Role.
 
 // NodeReconciler watches cluster Nodes and drives EndpointSlice (and,
 // optionally, legacy Endpoints) objects in Config.Namespace to reflect
@@ -113,9 +124,40 @@ func (r *NodeReconciler) applyLegacyEndpoints(ctx context.Context, want []corev1
 }
 
 // SetupWithManager wires the reconciler into mgr, watching Node objects.
+// Update events are filtered to only the field changes that affect
+// endpoint output (see nodeChangedPredicate) -- without this, every node's
+// periodic heartbeat status update (every 10-40s per node by default)
+// would trigger a full reconcile, regardless of whether it changes
+// anything this controller cares about.
 func (r *NodeReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&corev1.Node{}).
+		For(&corev1.Node{}, builder.WithPredicates(nodeChangedPredicate)).
 		Named("node").
 		Complete(r)
+}
+
+// nodeChangedPredicate lets Create and Delete events through unfiltered,
+// but only lets an Update event through when the node's schedulability or
+// Ready condition changed -- the two inputs to isReady() in
+// internal/endpoints. Any other field change (e.g. heartbeat timestamps,
+// resource capacity) is ignored.
+var nodeChangedPredicate = predicate.Funcs{
+	UpdateFunc: func(e event.UpdateEvent) bool {
+		oldNode, okOld := e.ObjectOld.(*corev1.Node)
+		newNode, okNew := e.ObjectNew.(*corev1.Node)
+		if !okOld || !okNew {
+			return true
+		}
+		return oldNode.Spec.Unschedulable != newNode.Spec.Unschedulable ||
+			nodeReadyStatus(oldNode) != nodeReadyStatus(newNode)
+	},
+}
+
+func nodeReadyStatus(node *corev1.Node) corev1.ConditionStatus {
+	for _, c := range node.Status.Conditions {
+		if c.Type == corev1.NodeReady {
+			return c.Status
+		}
+	}
+	return corev1.ConditionUnknown
 }
