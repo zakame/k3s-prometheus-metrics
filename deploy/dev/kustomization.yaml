@@ -1,5 +1,5 @@
 # Dev overlay: doesn't manage kube-prometheus's live CRDs/ServiceMonitors/
-# Services/Namespace, and pushes to your own registry instead of ghcr.io.
+# Namespace, and pushes to your own registry instead of ghcr.io.
 #
 # Usage: edit the `images:` override below, then `kubectl apply -k deploy/dev`.
 apiVersion: kustomize.config.k8s.io/v1beta1
@@ -32,37 +32,25 @@ patches:
     metadata:
       name: kube-proxy
       namespace: monitoring
-# Same for the Namespace and control-plane Services.
+# Same for the Namespace.
 - patch: |-
     $patch: delete
     apiVersion: v1
     kind: Namespace
     metadata:
       name: monitoring
+# Make sure we always pull the latest image for dev/testing
 - patch: |-
-    $patch: delete
-    apiVersion: v1
-    kind: Service
-    metadata:
-      name: kube-scheduler
-      namespace: kube-system
-- patch: |-
-    $patch: delete
-    apiVersion: v1
-    kind: Service
-    metadata:
-      name: kube-controller-manager
-      namespace: kube-system
-- patch: |-
-    $patch: delete
-    apiVersion: v1
-    kind: Service
-    metadata:
-      name: kube-proxy
-      namespace: kube-system
+    - op: add
+      path: /spec/template/spec/containers/0/imagePullPolicy
+      value: Always
+  target:
+    kind: Deployment
+    name: k3s-prometheus-metrics
 
 images:
-# Point this at your own registry before applying.
+# Point this at your own registry before applying, e.g. via
+# `make dev-image IMAGE=... TAG=...`.
 - name: ghcr.io/zakame/k3s-prometheus-metrics
   newName: CHANGE-ME/k3s-prometheus-metrics
   newTag: dev
