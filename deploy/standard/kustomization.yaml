@@ -6,6 +6,10 @@ resources:
 - serviceaccount.yaml
 - role.yaml
 - rolebinding.yaml
+- role-endpoints.yaml
+- rolebinding-endpoints.yaml
+- role-leader-election.yaml
+- rolebinding-leader-election.yaml
 - deployment.yaml
 - control-plane-services.yaml
 - servicemonitor.yaml

@@ -1,13 +1,10 @@
 # Bound cluster-wide because Node objects are cluster-scoped (the
 # controller must list/watch all nodes to find control-plane members).
-# The EndpointSlice/Endpoints permissions this ClusterRole also grants are
-# broader than strictly needed (any namespace, not just the configured
-# --namespace target) -- controller-gen generates a single ClusterRole from
-# all +kubebuilder:rbac markers in internal/controller, and splitting node
-# access (cluster-scoped) from endpoints/endpointslices access
-# (namespace-scoped) would need two roles for one controller. The
-# controller itself only ever writes to its configured --namespace
-# (default kube-system).
+# role.yaml (generated) now grants only read access to nodes -- the
+# namespace-scoped EndpointSlice/Endpoints and leader-election Lease
+# permissions live in role-endpoints.yaml and role-leader-election.yaml,
+# bound via their own namespaced RoleBindings, so this ClusterRoleBinding
+# no longer grants anything beyond cluster-wide node read access.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:

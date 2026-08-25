@@ -1,0 +1,16 @@
+# controller-runtime's leader election (enabled via --leader-elect in
+# deployment.yaml) defaults LeaderElectionNamespace to the pod's own
+# namespace and coordinates via a coordination.k8s.io Lease there.
+# Leadership changes also record Events against that Lease.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: k3s-prometheus-metrics-leader-election
+  namespace: monitoring
+rules:
+- apiGroups: ["coordination.k8s.io"]
+  resources: ["leases"]
+  verbs: ["get", "list", "watch", "create", "update", "patch"]
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["create", "patch"]

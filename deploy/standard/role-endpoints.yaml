@@ -1,0 +1,23 @@
+# Namespace-scoped counterpart to role.yaml's (generated) cluster-wide node
+# read access: the controller only ever writes EndpointSlice/Endpoints
+# objects in its configured --namespace (default kube-system), so this is a
+# Role, not a ClusterRole -- a compromised controller pod can't touch
+# endpoints/endpointslices in any other namespace.
+#
+# If you change the controller's --namespace flag, this Role (and its
+# RoleBinding in rolebinding-endpoints.yaml) must move to that namespace
+# too. Hand-maintained rather than controller-gen–generated: see the
+# comment above NodeReconciler in internal/controller/node_controller.go
+# for why.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: k3s-prometheus-metrics-endpoints
+  namespace: kube-system
+rules:
+- apiGroups: ["discovery.k8s.io"]
+  resources: ["endpointslices"]
+  verbs: ["get", "list", "watch", "create", "update", "patch"]
+- apiGroups: [""]
+  resources: ["endpoints"]
+  verbs: ["get", "list", "watch", "create", "update", "patch"]

@@ -28,7 +28,10 @@ spec:
         node-role.kubernetes.io/control-plane: "true"
       containers:
       - name: controller
-        image: ghcr.io/zakame/k3s-prometheus-metrics:latest
+        # goreleaser/ko only ever publish "master" (snapshot builds) and
+        # version tags (e.g. "v0.1.0") on release -- there is no ":latest"
+        # tag. Pin to a released version in production.
+        image: ghcr.io/zakame/k3s-prometheus-metrics:master
         args:
         - --leader-elect
         # Uncomment to also maintain legacy v1 Endpoints objects for
