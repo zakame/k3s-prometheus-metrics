@@ -9,10 +9,11 @@ RBAC_PATHS          := ./internal/controller/...
 RBAC_OUT            := deploy/standard
 ENVTEST_VERSION     := v0.24.1
 ENVTEST_K8S_VERSION := 1.36.2
+DEV_KUSTOMIZATION   := deploy/dev/kustomization.yaml
 
 .DEFAULT_GOAL := help
 
-.PHONY: help build test test-integration cover lint vet fmt manifests docker-build run clean
+.PHONY: help build test test-integration cover lint vet fmt manifests docker-build run clean dev-image
 
 help: ## Show this help message
 	@echo "Usage: make <target>"
@@ -58,6 +59,15 @@ manifests: ## Generate deploy/standard/role.yaml from +kubebuilder:rbac markers
 
 docker-build: ## Build a local container image (dev convenience; releases use goreleaser+ko)
 	docker build -t $(BINARY):dev .
+
+dev-image: ## Point deploy/dev at your image (usage: make dev-image IMAGE=registry.example.com/k3s-prometheus-metrics TAG=dev)
+	@test -n "$(IMAGE)" || (echo "Error: IMAGE is required, e.g. make dev-image IMAGE=registry.example.com/k3s-prometheus-metrics TAG=dev" >&2; exit 1)
+	@test -n "$(TAG)" || (echo "Error: TAG is required, e.g. make dev-image IMAGE=registry.example.com/k3s-prometheus-metrics TAG=dev" >&2; exit 1)
+	sed -i.bak \
+		-e 's|^\(  newName: \).*|\1$(IMAGE)|' \
+		-e 's|^\(  newTag: \).*|\1$(TAG)|' \
+		$(DEV_KUSTOMIZATION)
+	@rm -f $(DEV_KUSTOMIZATION).bak
 
 run: build ## Build and run the controller against the current kubeconfig context
 	$(BIN_DIR)/$(BINARY)
