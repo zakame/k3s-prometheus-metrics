@@ -1,0 +1,21 @@
+# Added by goreleaser init:
+dist/
+
+# Build artifacts
+/bin/
+coverage.txt
+unit-tests.json
+
+# Go
+*.test
+*.out
+
+# Local kind/e2e artifacts
+kubeconfig
+kubeconfig.*
+.kind/
+*.kubeconfig
+
+# Editors / OS
+.DS_Store
+*.swp
