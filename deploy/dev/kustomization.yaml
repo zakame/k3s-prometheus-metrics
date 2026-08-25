@@ -1,0 +1,68 @@
+# Dev overlay: doesn't manage kube-prometheus's live CRDs/ServiceMonitors/
+# Services/Namespace, and pushes to your own registry instead of ghcr.io.
+#
+# Usage: edit the `images:` override below, then `kubectl apply -k deploy/dev`.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+- ../standard
+
+patches:
+# Don't manage ServiceMonitors here; a live kube-prometheus-stack install
+# already owns these.
+- patch: |-
+    $patch: delete
+    apiVersion: monitoring.coreos.com/v1
+    kind: ServiceMonitor
+    metadata:
+      name: kube-scheduler
+      namespace: monitoring
+- patch: |-
+    $patch: delete
+    apiVersion: monitoring.coreos.com/v1
+    kind: ServiceMonitor
+    metadata:
+      name: kube-controller-manager
+      namespace: monitoring
+- patch: |-
+    $patch: delete
+    apiVersion: monitoring.coreos.com/v1
+    kind: ServiceMonitor
+    metadata:
+      name: kube-proxy
+      namespace: monitoring
+# Same for the Namespace and control-plane Services.
+- patch: |-
+    $patch: delete
+    apiVersion: v1
+    kind: Namespace
+    metadata:
+      name: monitoring
+- patch: |-
+    $patch: delete
+    apiVersion: v1
+    kind: Service
+    metadata:
+      name: kube-scheduler
+      namespace: kube-system
+- patch: |-
+    $patch: delete
+    apiVersion: v1
+    kind: Service
+    metadata:
+      name: kube-controller-manager
+      namespace: kube-system
+- patch: |-
+    $patch: delete
+    apiVersion: v1
+    kind: Service
+    metadata:
+      name: kube-proxy
+      namespace: kube-system
+
+images:
+# Point this at your own registry before applying.
+- name: ghcr.io/zakame/k3s-prometheus-metrics
+  newName: CHANGE-ME/k3s-prometheus-metrics
+  newTag: dev
