@@ -1,11 +1,12 @@
-// Package endpoints contains pure functions that turn a set of
-// control-plane Nodes into discovery.k8s.io/v1 EndpointSlice objects (and,
-// optionally, legacy v1 Endpoints -- see legacy.go). These functions take
-// no client and make no API calls, so they are unit-testable without a
-// fake or envtest client.
+// Package endpoints builds the Service, EndpointSlice, and legacy
+// Endpoints objects this controller manages, as pure functions with no
+// client or API calls.
 package endpoints
 
 import (
+	"net"
+	"sort"
+
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -23,47 +24,63 @@ const (
 	sliceNameSuffix = "-metrics"
 )
 
-// BuildEndpointSlices turns nodes into one discovery.k8s.io/v1
-// EndpointSlice per service in cfg.Services, in cfg.Namespace. Nodes
-// without a usable InternalIP address are skipped entirely. Returns nil if
-// no node yields a usable address.
+// BuildEndpointSlices turns nodes into EndpointSlice objects in
+// cfg.Namespace: one per (service, address family) pair, since an
+// EndpointSlice's AddressType is fixed and can't mix IPv4/IPv6. Nodes
+// without a usable InternalIP are skipped. Returns nil if none qualify.
 func BuildEndpointSlices(nodes []corev1.Node, cfg config.Config) []discoveryv1.EndpointSlice {
-	eps := endpointsFromNodes(nodes)
-	if len(eps) == 0 {
+	byFamily := endpointsFromNodes(nodes)
+	if len(byFamily) == 0 {
 		return nil
 	}
 
-	slices := make([]discoveryv1.EndpointSlice, 0, len(cfg.Services))
+	families := make([]discoveryv1.AddressType, 0, len(byFamily))
+	for family := range byFamily {
+		families = append(families, family)
+	}
+	sort.Slice(families, func(i, j int) bool { return families[i] < families[j] })
+
+	slices := make([]discoveryv1.EndpointSlice, 0, len(cfg.Services)*len(families))
 	for _, svc := range cfg.Services {
 		port := svc.Port
 		protocol := svc.Protocol
 		appProtocol := svc.AppProtocol
 		portName := svc.PortName
 
-		slices = append(slices, discoveryv1.EndpointSlice{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      svc.Name + sliceNameSuffix,
-				Namespace: cfg.Namespace,
-				Labels: map[string]string{
-					discoveryv1.LabelServiceName: svc.Name,
-					discoveryv1.LabelManagedBy:   ManagedByValue,
+		for _, family := range families {
+			name := svc.Name + sliceNameSuffix
+			if family == discoveryv1.AddressTypeIPv6 {
+				name += "-ipv6"
+			}
+
+			slices = append(slices, discoveryv1.EndpointSlice{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      name,
+					Namespace: cfg.Namespace,
+					Labels: map[string]string{
+						discoveryv1.LabelServiceName: svc.Name,
+						discoveryv1.LabelManagedBy:   ManagedByValue,
+					},
 				},
-			},
-			AddressType: discoveryv1.AddressTypeIPv4,
-			Endpoints:   eps,
-			Ports: []discoveryv1.EndpointPort{{
-				Name:        &portName,
-				Port:        &port,
-				Protocol:    &protocol,
-				AppProtocol: &appProtocol,
-			}},
-		})
+				AddressType: family,
+				Endpoints:   byFamily[family],
+				Ports: []discoveryv1.EndpointPort{{
+					Name:        &portName,
+					Port:        &port,
+					Protocol:    &protocol,
+					AppProtocol: &appProtocol,
+				}},
+			})
+		}
 	}
 	return slices
 }
 
-func endpointsFromNodes(nodes []corev1.Node) []discoveryv1.Endpoint {
-	eps := make([]discoveryv1.Endpoint, 0, len(nodes))
+// endpointsFromNodes groups nodes' endpoints by their InternalIP's address
+// family, since discovery.k8s.io/v1 requires every address in an
+// EndpointSlice to match its single declared AddressType.
+func endpointsFromNodes(nodes []corev1.Node) map[discoveryv1.AddressType][]discoveryv1.Endpoint {
+	byFamily := map[discoveryv1.AddressType][]discoveryv1.Endpoint{}
 	for i := range nodes {
 		node := &nodes[i]
 		addr, ok := internalIP(node)
@@ -73,7 +90,8 @@ func endpointsFromNodes(nodes []corev1.Node) []discoveryv1.Endpoint {
 
 		ready := isReady(node)
 		nodeName := node.Name
-		eps = append(eps, discoveryv1.Endpoint{
+		family := addressFamily(addr)
+		byFamily[family] = append(byFamily[family], discoveryv1.Endpoint{
 			Addresses: []string{addr},
 			Conditions: discoveryv1.EndpointConditions{
 				Ready:   &ready,
@@ -82,7 +100,7 @@ func endpointsFromNodes(nodes []corev1.Node) []discoveryv1.Endpoint {
 			NodeName: &nodeName,
 		})
 	}
-	return eps
+	return byFamily
 }
 
 func internalIP(node *corev1.Node) (string, bool) {
@@ -94,12 +112,18 @@ func internalIP(node *corev1.Node) (string, bool) {
 	return "", false
 }
 
-// isReady reports whether node should be marked Ready/Serving in its
-// endpoint conditions. Cordoned (Unschedulable) or NotReady nodes stay in
-// the EndpointSlice -- consistent with how Kubernetes' own EndpointSlice
-// controller handles transiently-unready pods -- but with Ready=false, so
-// Prometheus service discovery reflects them as down rather than the
-// target silently disappearing.
+// addressFamily reports the discovery.k8s.io/v1 AddressType matching addr's
+// actual IP family, rather than assuming IPv4.
+func addressFamily(addr string) discoveryv1.AddressType {
+	if ip := net.ParseIP(addr); ip != nil && ip.To4() == nil {
+		return discoveryv1.AddressTypeIPv6
+	}
+	return discoveryv1.AddressTypeIPv4
+}
+
+// isReady reports whether node should be marked Ready/Serving. Cordoned or
+// NotReady nodes stay in the EndpointSlice with Ready=false rather than
+// being dropped, so Prometheus shows them as down instead of missing.
 func isReady(node *corev1.Node) bool {
 	if node.Spec.Unschedulable {
 		return false
