@@ -64,6 +64,9 @@ jobs:
     - run: >-
         go run sigs.k8s.io/kustomize/kustomize/v5@v5.8.1 build deploy/standard
         | kubectl apply --dry-run=client --validate=true -f -
+    - run: >-
+        go run sigs.k8s.io/kustomize/kustomize/v5@v5.8.1 build deploy/dev
+        | kubectl apply --dry-run=client --validate=true -f -
 
   e2e:
     runs-on: ubuntu-latest
