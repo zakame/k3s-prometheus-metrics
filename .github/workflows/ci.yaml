@@ -73,27 +73,27 @@ jobs:
     - run: >-
         go run sigs.k8s.io/kustomize/kustomize/v5@v5.8.1 build deploy/dev
         | go run github.com/yannh/kubeconform/cmd/kubeconform@v0.8.0 -summary -ignore-missing-schemas
+    - run: >-
+        go run sigs.k8s.io/kustomize/kustomize/v5@v5.8.1 build deploy/e2e
+        | go run github.com/yannh/kubeconform/cmd/kubeconform@v0.8.0 -summary -ignore-missing-schemas
 
   e2e:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-    - id: has-e2e
-      # Skip cleanly until test/e2e exists, so early PRs aren't blocked
-      # on a suite that hasn't been written yet.
-      run: |
-        if [ -d test/e2e ]; then
-          echo "present=true" >> "$GITHUB_OUTPUT"
-        else
-          echo "present=false" >> "$GITHUB_OUTPUT"
-        fi
     - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-      if: steps.has-e2e.outputs.present == 'true'
       with:
         go-version-file: go.mod
-    - uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc # v1.14.0
-      if: steps.has-e2e.outputs.present == 'true'
-      with:
-        cluster_name: k3s-prometheus-metrics
-    - if: steps.has-e2e.outputs.present == 'true'
-      run: go test -tags e2e -v -timeout 20m ./test/e2e/...
+    - # kind runs vanilla upstream Kubernetes, which labels control-plane
+      # nodes differently from k3s (empty value vs "true"); k3d runs real
+      # k3s binaries, so it actually exercises this controller's k3s-specific
+      # assumptions.
+      run: curl -sf https://raw.githubusercontent.com/k3d-io/k3d/v5.9.0/install.sh | TAG=v5.9.0 bash
+    - run: k3d cluster create k3s-prometheus-metrics --wait
+    - run: >-
+        KO_DOCKER_REPO=k3s-prometheus-metrics
+        go run github.com/google/ko@v0.19.1 build --local --bare -t e2e ./cmd/k3s-prometheus-metrics
+    - run: k3d image import k3s-prometheus-metrics:e2e -c k3s-prometheus-metrics
+    - run: kubectl apply -k deploy/e2e
+    - run: kubectl -n monitoring rollout status deployment/k3s-prometheus-metrics --timeout=60s
+    - run: go test -tags e2e -v -timeout 20m ./test/e2e/...
