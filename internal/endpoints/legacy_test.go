@@ -124,7 +124,7 @@ func TestBuildEndpoints_MultipleServices_PortsAndLabelsPerService(t *testing.T) 
 		t.Fatalf("expected 2 Endpoints objects, got %d", len(got))
 	}
 
-	byName := map[string]corev1.Endpoints{}
+	byName := map[string]corev1.Endpoints{} //nolint:staticcheck
 	for _, e := range got {
 		byName[e.Name] = e
 	}
@@ -176,7 +176,7 @@ func TestBuildEndpoints_DifferentNodeSetsPerService_NoCrossContamination(t *test
 	}
 
 	got := endpoints.BuildEndpoints(nodesByService, cfg) //nolint:staticcheck
-	byName := map[string]corev1.Endpoints{}
+	byName := map[string]corev1.Endpoints{}              //nolint:staticcheck
 	for _, e := range got {
 		byName[e.Name] = e
 	}
@@ -274,7 +274,7 @@ func TestBuildEndpoints_AppProtocolPointersNotAliasedAcrossServices(t *testing.T
 	nodes := []corev1.Node{node("n1", "10.0.0.1", withReadyCondition(corev1.ConditionTrue))}
 	got := endpoints.BuildEndpoints(nodesFor(cfg, nodes), cfg) //nolint:staticcheck
 
-	byName := map[string]corev1.Endpoints{}
+	byName := map[string]corev1.Endpoints{} //nolint:staticcheck
 	for _, e := range got {
 		byName[e.Name] = e
 	}
