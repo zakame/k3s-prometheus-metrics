@@ -19,7 +19,7 @@ jobs:
     - run: make fmt
     - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
       with:
-        version: v2.11.3
+        version: v2.13.1
 
   test:
     runs-on: ubuntu-latest
@@ -62,12 +62,17 @@ jobs:
       with:
         go-version-file: go.mod
     - run: make manifests && git diff --exit-code -- deploy/standard/role.yaml
-    - run: >-
+    - # kubectl apply --dry-run=client still requires live API server access
+      # (for RESTMapper discovery, even of built-in types), which no cluster
+      # is available for here; kubeconform validates offline instead, and
+      # -ignore-missing-schemas skips CRD kinds like ServiceMonitor that it
+      # has no schema for.
+      run: >-
         go run sigs.k8s.io/kustomize/kustomize/v5@v5.8.1 build deploy/standard
-        | kubectl apply --dry-run=client --validate=true -f -
+        | go run github.com/yannh/kubeconform/cmd/kubeconform@v0.8.0 -summary -ignore-missing-schemas
     - run: >-
         go run sigs.k8s.io/kustomize/kustomize/v5@v5.8.1 build deploy/dev
-        | kubectl apply --dry-run=client --validate=true -f -
+        | go run github.com/yannh/kubeconform/cmd/kubeconform@v0.8.0 -summary -ignore-missing-schemas
 
   e2e:
     runs-on: ubuntu-latest

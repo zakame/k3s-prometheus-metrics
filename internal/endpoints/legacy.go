@@ -13,14 +13,14 @@ import (
 // than 1.33. Not-ready nodes go in NotReadyAddresses, which most legacy
 // consumers don't scrape by default.
 func BuildEndpoints(nodesByService map[string][]corev1.Node, cfg config.Config) []corev1.Endpoints { //nolint:staticcheck // SA1019: intentional legacy support for Kubernetes <1.33
-	var all []corev1.Endpoints
+	var all []corev1.Endpoints //nolint:staticcheck
 	for _, svc := range cfg.Services {
 		ready, notReady := splitByReadiness(nodesByService[svc.Name])
 		if len(ready) == 0 && len(notReady) == 0 {
 			continue
 		}
 
-		all = append(all, corev1.Endpoints{
+		all = append(all, corev1.Endpoints{ //nolint:staticcheck
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      svc.Name,
 				Namespace: cfg.Namespace,
@@ -33,7 +33,7 @@ func BuildEndpoints(nodesByService map[string][]corev1.Node, cfg config.Config) 
 					discoveryv1.LabelSkipMirror: "true",
 				},
 			},
-			Subsets: []corev1.EndpointSubset{{
+			Subsets: []corev1.EndpointSubset{{ //nolint:staticcheck
 				Addresses:         ready,
 				NotReadyAddresses: notReady,
 				Ports: []corev1.EndpointPort{{
