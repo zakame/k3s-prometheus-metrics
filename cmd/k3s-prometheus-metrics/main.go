@@ -52,8 +52,10 @@ func main() {
 		"Namespace to create/update EndpointSlice (and, if enabled, Endpoints) objects in. "+
 			"This is independent of the namespace the controller itself is deployed in.")
 	flag.StringVar(&nodeSelectorFlag, "node-selector", config.ControlPlaneNodeSelector+"=true",
-		"Comma-separated key=value node label selector identifying control-plane nodes. "+
-			"k3s sets this label with value \"true\"; a generic kubeadm cluster would use an empty value instead.")
+		"Comma-separated key=value node label selector identifying control-plane nodes, "+
+			"for kube-scheduler and kube-controller-manager. k3s sets this label with value "+
+			"\"true\"; a generic kubeadm cluster would use an empty value instead. Not used "+
+			"for kube-proxy, which always matches every node regardless of this flag.")
 	flag.BoolVar(&writeLegacyEndpoints, "write-legacy-endpoints", false,
 		"Also create/update legacy v1 Endpoints objects, for Kubernetes clusters older than 1.33.")
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080",
