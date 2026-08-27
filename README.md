@@ -33,13 +33,26 @@ k3s support.
 ### Enabling the metrics ports on k3s
 
 k3s has no dedicated "expose metrics" flag. Bind addresses are set via its
-generic passthrough flags to the underlying components. On each server
-node:
+generic passthrough flags to the underlying components. `--kube-scheduler-arg`
+and `--kube-controller-manager-arg` only need to go on `k3s server`, since
+those components only run on server (control-plane) nodes. `--kube-proxy-arg`
+is different: it's a per-node-process flag that does **not** propagate from
+the server, so it must be set on **every** node's own `k3s server` or `k3s
+agent` invocation/config, not just the servers'.
+
+On each server node:
 
 ```bash
 k3s server \
   --kube-scheduler-arg=bind-address=0.0.0.0 \
   --kube-controller-manager-arg=bind-address=0.0.0.0 \
+  --kube-proxy-arg=metrics-bind-address=0.0.0.0:10249
+```
+
+On each agent node:
+
+```bash
+k3s agent \
   --kube-proxy-arg=metrics-bind-address=0.0.0.0:10249
 ```
 
@@ -89,7 +102,11 @@ and organized as:
   a separate `<service>-metrics-ipv6` EndpointSlice alongside the IPv4 one,
   since a single EndpointSlice's `AddressType` can't mix families.
 - `internal/config/`: the static table of watched services and their
-  metrics ports (kube-scheduler, kube-proxy, kube-controller-manager)
+  metrics ports (kube-scheduler, kube-proxy, kube-controller-manager).
+  `--node-selector` only narrows kube-scheduler and kube-controller-manager
+  to control-plane nodes; kube-proxy's `NodeSelector` is hardcoded empty in
+  this table (not flag-configurable) since kube-proxy runs on every node,
+  not just control-plane ones
 - `deploy/standard/`: sample manifests (namespace, RBAC, ServiceAccount,
   Deployment, ServiceMonitor, kustomization) for deploying the controller
   alongside a kube-prometheus/kube-prometheus-stack install
@@ -122,8 +139,8 @@ Pull the container image from GitHub Container Registry:
 docker pull ghcr.io/zakame/k3s-prometheus-metrics:master
 ```
 
-(Tagged releases publish a `vX.Y.Z` image tag in addition to `master`; see
-the [releases page](https://github.com/zakame/k3s-prometheus-metrics/releases).)
+(Tagged releases publish an `X.Y.Z` image tag (no `v` prefix) in addition to
+`master`; see the [releases page](https://github.com/zakame/k3s-prometheus-metrics/releases).)
 
 ### Building from Source
 
@@ -155,7 +172,7 @@ directly.
 | Flag | Default | Description |
 |------|---------|--------------|
 | `--namespace` | `kube-system` | Namespace to create/update Service, EndpointSlice (and, if enabled, Endpoints) objects in. Independent of the namespace the controller itself is deployed in. |
-| `--node-selector` | `node-role.kubernetes.io/control-plane=true` | Comma-separated `key=value` node label selector identifying control-plane nodes. k3s sets this label to `true`; a kubeadm cluster would use an empty value instead. |
+| `--node-selector` | `node-role.kubernetes.io/control-plane=true` | Comma-separated `key=value` node label selector identifying control-plane nodes, for kube-scheduler and kube-controller-manager. k3s sets this label to `true`; a kubeadm cluster would use an empty value instead. **Not used for kube-proxy**, which always matches every node regardless of this flag. |
 | `--write-legacy-endpoints` | `false` | Also create/update legacy `v1` Endpoints objects, for Kubernetes clusters older than 1.33. |
 | `--metrics-bind-address` | `:8080` | Address the controller's own Prometheus metrics endpoint binds to. |
 | `--health-probe-bind-address` | `:8081` | Address the controller's `/healthz` and `/readyz` probe endpoint binds to. |
