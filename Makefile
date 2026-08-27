@@ -16,12 +16,12 @@ DEV_LOCAL_KUSTOMIZATION := deploy/dev-local/kustomization.yaml
 
 .DEFAULT_GOAL := help
 
-.PHONY: help build test test-integration cover lint vet fmt manifests docker-build run clean dev-image
+.PHONY: help build test test-integration test-e2e cover lint vet fmt manifests docker-build run clean dev-image
 
 help: ## Show this help message
 	@echo "Usage: make <target>"
 	@echo ""
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
+	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
 		| sort \
 		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
 
@@ -35,6 +35,9 @@ test: ## Run all tests
 test-integration: ## Run envtest-backed integration tests (test/integration/, build tag integration)
 	KUBEBUILDER_ASSETS="$$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest@$(ENVTEST_VERSION) use $(ENVTEST_K8S_VERSION) -p path)" \
 		go test -tags integration -v -count=1 ./test/integration/...
+
+test-e2e: ## Run e2e tests (test/e2e/, build tag e2e); needs a real cluster with deploy/e2e already applied
+	go test -tags e2e -v -timeout 20m ./test/e2e/...
 
 cover: ## Run tests with coverage report
 	go test -cover -coverpkg=./... -coverprofile=coverage.txt -covermode=atomic ./...
