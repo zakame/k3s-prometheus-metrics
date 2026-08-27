@@ -23,6 +23,16 @@ func testConfig(services ...config.Service) config.Config {
 	return config.Config{Namespace: "kube-system", Services: services}
 }
 
+// nodesFor assigns the same nodes to every service in cfg, for tests that
+// don't care about per-service scoping (see config.Service.NodeSelector).
+func nodesFor(cfg config.Config, nodes []corev1.Node) map[string][]corev1.Node {
+	m := make(map[string][]corev1.Node, len(cfg.Services))
+	for _, svc := range cfg.Services {
+		m[svc.Name] = nodes
+	}
+	return m
+}
+
 type nodeOpt func(*corev1.Node)
 
 func node(name, internalIP string, opts ...nodeOpt) corev1.Node {
@@ -93,10 +103,11 @@ func TestBuildEndpointSlices_NoNodes_ReturnsNil(t *testing.T) {
 }
 
 func TestBuildEndpointSlices_NodeWithoutInternalIP_Skipped(t *testing.T) {
+	cfg := testConfig()
 	nodes := []corev1.Node{
 		node("no-ip", "", withReadyCondition(corev1.ConditionTrue)),
 	}
-	got := endpoints.BuildEndpointSlices(nodes, testConfig())
+	got := endpoints.BuildEndpointSlices(nodesFor(cfg, nodes), cfg)
 	if got != nil {
 		t.Fatalf("expected nil when no node has a usable InternalIP, got %#v", got)
 	}
@@ -107,18 +118,20 @@ func TestBuildEndpointSlices_NodeWithOnlyExternalIP_Skipped(t *testing.T) {
 	withExternalIP("203.0.113.1")(&n)
 	withReadyCondition(corev1.ConditionTrue)(&n)
 
-	got := endpoints.BuildEndpointSlices([]corev1.Node{n}, testConfig())
+	cfg := testConfig()
+	got := endpoints.BuildEndpointSlices(nodesFor(cfg, []corev1.Node{n}), cfg)
 	if got != nil {
 		t.Fatalf("expected nil, node has no InternalIP address, got %#v", got)
 	}
 }
 
 func TestBuildEndpointSlices_MixOfUsableAndUnusableNodes_OnlyUsableIncluded(t *testing.T) {
+	cfg := testConfig()
 	nodes := []corev1.Node{
 		node("has-ip", "10.0.0.1", withReadyCondition(corev1.ConditionTrue)),
 		node("no-ip", "", withReadyCondition(corev1.ConditionTrue)),
 	}
-	got := endpoints.BuildEndpointSlices(nodes, testConfig())
+	got := endpoints.BuildEndpointSlices(nodesFor(cfg, nodes), cfg)
 	if len(got) != 1 {
 		t.Fatalf("expected 1 slice, got %d", len(got))
 	}
@@ -133,8 +146,9 @@ func TestBuildEndpointSlices_MixOfUsableAndUnusableNodes_OnlyUsableIncluded(t *t
 // --- BuildEndpointSlices: readiness classification ------------------------
 
 func TestBuildEndpointSlices_ReadyNode_MarkedReadyAndServing(t *testing.T) {
+	cfg := testConfig()
 	nodes := []corev1.Node{node("n1", "10.0.0.1", withReadyCondition(corev1.ConditionTrue))}
-	got := endpoints.BuildEndpointSlices(nodes, testConfig())
+	got := endpoints.BuildEndpointSlices(nodesFor(cfg, nodes), cfg)
 	ep := endpointByNode(t, got[0].Endpoints, "n1")
 	if !boolPtrVal(t, ep.Conditions.Ready) || !boolPtrVal(t, ep.Conditions.Serving) {
 		t.Fatalf("expected Ready=true, Serving=true, got Ready=%v Serving=%v",
@@ -146,10 +160,11 @@ func TestBuildEndpointSlices_ReadyNode_MarkedReadyAndServing(t *testing.T) {
 }
 
 func TestBuildEndpointSlices_CordonedNode_StaysButNotReady(t *testing.T) {
+	cfg := testConfig()
 	nodes := []corev1.Node{
 		node("cordoned", "10.0.0.2", withReadyCondition(corev1.ConditionTrue), cordoned()),
 	}
-	got := endpoints.BuildEndpointSlices(nodes, testConfig())
+	got := endpoints.BuildEndpointSlices(nodesFor(cfg, nodes), cfg)
 	if len(got[0].Endpoints) != 1 {
 		t.Fatalf("cordoned node must stay in the endpoint list, got %d endpoints", len(got[0].Endpoints))
 	}
@@ -161,10 +176,11 @@ func TestBuildEndpointSlices_CordonedNode_StaysButNotReady(t *testing.T) {
 }
 
 func TestBuildEndpointSlices_NotReadyCondition_StaysButNotReady(t *testing.T) {
+	cfg := testConfig()
 	nodes := []corev1.Node{
 		node("notready", "10.0.0.3", withReadyCondition(corev1.ConditionFalse)),
 	}
-	got := endpoints.BuildEndpointSlices(nodes, testConfig())
+	got := endpoints.BuildEndpointSlices(nodesFor(cfg, nodes), cfg)
 	ep := endpointByNode(t, got[0].Endpoints, "notready")
 	if boolPtrVal(t, ep.Conditions.Ready) {
 		t.Fatal("expected Ready=false for a node reporting NodeReady=False")
@@ -172,10 +188,11 @@ func TestBuildEndpointSlices_NotReadyCondition_StaysButNotReady(t *testing.T) {
 }
 
 func TestBuildEndpointSlices_UnknownReadyCondition_TreatedNotReady(t *testing.T) {
+	cfg := testConfig()
 	nodes := []corev1.Node{
 		node("unknown", "10.0.0.4", withReadyCondition(corev1.ConditionUnknown)),
 	}
-	got := endpoints.BuildEndpointSlices(nodes, testConfig())
+	got := endpoints.BuildEndpointSlices(nodesFor(cfg, nodes), cfg)
 	ep := endpointByNode(t, got[0].Endpoints, "unknown")
 	if boolPtrVal(t, ep.Conditions.Ready) {
 		t.Fatal("expected Ready=false when NodeReady condition is Unknown (only True counts as ready)")
@@ -183,9 +200,10 @@ func TestBuildEndpointSlices_UnknownReadyCondition_TreatedNotReady(t *testing.T)
 }
 
 func TestBuildEndpointSlices_MissingReadyCondition_TreatedNotReady(t *testing.T) {
+	cfg := testConfig()
 	// No NodeReady condition set at all (e.g. brand-new node still joining).
 	nodes := []corev1.Node{node("bare", "10.0.0.5")}
-	got := endpoints.BuildEndpointSlices(nodes, testConfig())
+	got := endpoints.BuildEndpointSlices(nodesFor(cfg, nodes), cfg)
 	if len(got[0].Endpoints) != 1 {
 		t.Fatalf("node missing NodeReady condition must still be included, got %d endpoints", len(got[0].Endpoints))
 	}
@@ -196,10 +214,11 @@ func TestBuildEndpointSlices_MissingReadyCondition_TreatedNotReady(t *testing.T)
 }
 
 func TestBuildEndpointSlices_CordonedAndNotReady_StillIncludedOnce(t *testing.T) {
+	cfg := testConfig()
 	nodes := []corev1.Node{
 		node("both", "10.0.0.6", withReadyCondition(corev1.ConditionFalse), cordoned()),
 	}
-	got := endpoints.BuildEndpointSlices(nodes, testConfig())
+	got := endpoints.BuildEndpointSlices(nodesFor(cfg, nodes), cfg)
 	if len(got[0].Endpoints) != 1 {
 		t.Fatalf("expected exactly 1 endpoint for a node that is both cordoned and not-ready, got %d",
 			len(got[0].Endpoints))
@@ -209,12 +228,13 @@ func TestBuildEndpointSlices_CordonedAndNotReady_StillIncludedOnce(t *testing.T)
 // --- BuildEndpointSlices: multi-node / multi-service shape ----------------
 
 func TestBuildEndpointSlices_MultipleNodes_SingleSlicePerServiceWithAllEndpoints(t *testing.T) {
+	cfg := testConfig()
 	nodes := []corev1.Node{
 		node("n1", "10.0.0.1", withReadyCondition(corev1.ConditionTrue)),
 		node("n2", "10.0.0.2", withReadyCondition(corev1.ConditionTrue)),
 		node("n3", "10.0.0.3", withReadyCondition(corev1.ConditionFalse)),
 	}
-	got := endpoints.BuildEndpointSlices(nodes, testConfig())
+	got := endpoints.BuildEndpointSlices(nodesFor(cfg, nodes), cfg)
 	if len(got) != 1 {
 		t.Fatalf("expected 1 slice for 1 configured service, got %d", len(got))
 	}
@@ -229,7 +249,7 @@ func TestBuildEndpointSlices_MultipleServices_OneSlicePerService(t *testing.T) {
 		config.Service{Name: "svc-a", Port: 1111, Protocol: corev1.ProtocolTCP, AppProtocol: "http"},
 		config.Service{Name: "svc-b", Port: 2222, Protocol: corev1.ProtocolTCP, AppProtocol: "https"},
 	)
-	got := endpoints.BuildEndpointSlices(nodes, cfg)
+	got := endpoints.BuildEndpointSlices(nodesFor(cfg, nodes), cfg)
 	if len(got) != 2 {
 		t.Fatalf("expected 2 slices for 2 configured services, got %d", len(got))
 	}
@@ -237,7 +257,6 @@ func TestBuildEndpointSlices_MultipleServices_OneSlicePerService(t *testing.T) {
 	if !names["svc-a-metrics"] || !names["svc-b-metrics"] {
 		t.Fatalf("expected slice names svc-a-metrics and svc-b-metrics, got %v", names)
 	}
-	// Same node-derived endpoint set must appear in both slices.
 	for _, s := range got {
 		if len(s.Endpoints) != 1 {
 			t.Fatalf("slice %s: expected 1 endpoint, got %d", s.Name, len(s.Endpoints))
@@ -245,10 +264,67 @@ func TestBuildEndpointSlices_MultipleServices_OneSlicePerService(t *testing.T) {
 	}
 }
 
+func TestBuildEndpointSlices_DifferentNodeSetsPerService_NoCrossContamination(t *testing.T) {
+	cpNode := node("cp", "10.0.1.1", withReadyCondition(corev1.ConditionTrue))
+	agentNode := node("agent", "10.0.1.2", withReadyCondition(corev1.ConditionTrue))
+
+	cfg := testConfig(
+		config.Service{Name: "kube-scheduler", Port: 10259, Protocol: corev1.ProtocolTCP, AppProtocol: "https"},
+		config.Service{Name: "kube-proxy", Port: 10249, Protocol: corev1.ProtocolTCP, AppProtocol: "http"},
+	)
+	nodesByService := map[string][]corev1.Node{
+		"kube-scheduler": {cpNode},
+		"kube-proxy":     {cpNode, agentNode},
+	}
+
+	got := endpoints.BuildEndpointSlices(nodesByService, cfg)
+	byName := map[string]discoveryv1.EndpointSlice{}
+	for _, s := range got {
+		byName[s.Name] = s
+	}
+
+	sched, ok := byName["kube-scheduler-metrics"]
+	if !ok {
+		t.Fatal("missing kube-scheduler-metrics slice")
+	}
+	if len(sched.Endpoints) != 1 || *sched.Endpoints[0].NodeName != "cp" {
+		t.Fatalf("expected kube-scheduler-metrics to contain only the cp node, got %+v", sched.Endpoints)
+	}
+
+	proxy, ok := byName["kube-proxy-metrics"]
+	if !ok {
+		t.Fatal("missing kube-proxy-metrics slice")
+	}
+	if len(proxy.Endpoints) != 2 {
+		t.Fatalf("expected kube-proxy-metrics to contain both nodes, got %d: %+v", len(proxy.Endpoints), proxy.Endpoints)
+	}
+}
+
+// One service having zero qualifying nodes must not suppress the others'
+// slices (all-or-nothing -> per-service skip).
+func TestBuildEndpointSlices_ServiceWithNoQualifyingNodes_OnlyThatServiceSkipped(t *testing.T) {
+	cfg := testConfig(
+		config.Service{Name: "svc-a", Port: 1111, Protocol: corev1.ProtocolTCP, AppProtocol: "http"},
+		config.Service{Name: "svc-b", Port: 2222, Protocol: corev1.ProtocolTCP, AppProtocol: "http"},
+	)
+	nodesByService := map[string][]corev1.Node{
+		"svc-a": {node("n1", "10.0.0.1", withReadyCondition(corev1.ConditionTrue))},
+		// svc-b: absent -- e.g. its selector currently matches zero nodes.
+	}
+
+	got := endpoints.BuildEndpointSlices(nodesByService, cfg)
+	if len(got) != 1 {
+		t.Fatalf("expected exactly 1 slice (svc-b has no qualifying nodes), got %d: %+v", len(got), got)
+	}
+	if got[0].Name != "svc-a-metrics" {
+		t.Fatalf("expected the surviving slice to be svc-a-metrics, got %q", got[0].Name)
+	}
+}
+
 func TestBuildEndpointSlices_PortsMatchDefaultServices(t *testing.T) {
-	nodes := []corev1.Node{node("n1", "10.0.0.1", withReadyCondition(corev1.ConditionTrue))}
 	cfg := testConfig(config.DefaultServices...)
-	got := endpoints.BuildEndpointSlices(nodes, cfg)
+	nodes := []corev1.Node{node("n1", "10.0.0.1", withReadyCondition(corev1.ConditionTrue))}
+	got := endpoints.BuildEndpointSlices(nodesFor(cfg, nodes), cfg)
 
 	want := map[string]struct {
 		port        int32
@@ -294,10 +370,36 @@ func TestBuildEndpointSlices_PortsMatchDefaultServices(t *testing.T) {
 	}
 }
 
+// Guards against a "fix" that sets kube-proxy's NodeSelector back to nil,
+// which would silently drop every agent node from its EndpointSlice.
+func TestDefaultServices_KubeProxyUsesAllNodesSelector(t *testing.T) {
+	want := map[string]bool{
+		"kube-scheduler":          false, // nil -> inherits Config.NodeSelector
+		"kube-controller-manager": false,
+		"kube-proxy":              true, // non-nil (empty) -> all nodes
+	}
+	if len(config.DefaultServices) != len(want) {
+		t.Fatalf("expected %d default services, got %d", len(want), len(config.DefaultServices))
+	}
+	for _, svc := range config.DefaultServices {
+		wantOverride, ok := want[svc.Name]
+		if !ok {
+			t.Fatalf("unexpected default service %q", svc.Name)
+		}
+		gotOverride := svc.NodeSelector != nil
+		if gotOverride != wantOverride {
+			t.Errorf("%s: expected NodeSelector override=%v, got %v (value=%#v)", svc.Name, wantOverride, gotOverride, svc.NodeSelector)
+		}
+		if svc.Name == "kube-proxy" && len(svc.NodeSelector) != 0 {
+			t.Errorf("kube-proxy: expected an empty NodeSelector (matches all nodes), got %#v", svc.NodeSelector)
+		}
+	}
+}
+
 func TestBuildEndpointSlices_PortNamePropagatedFromService(t *testing.T) {
-	nodes := []corev1.Node{node("n1", "10.0.0.1", withReadyCondition(corev1.ConditionTrue))}
 	cfg := testConfig(config.Service{Name: "custom", PortName: "custom-port-name", Port: 4242, Protocol: corev1.ProtocolTCP, AppProtocol: "http"})
-	got := endpoints.BuildEndpointSlices(nodes, cfg)
+	nodes := []corev1.Node{node("n1", "10.0.0.1", withReadyCondition(corev1.ConditionTrue))}
+	got := endpoints.BuildEndpointSlices(nodesFor(cfg, nodes), cfg)
 	p := got[0].Ports[0]
 	if p.Name == nil || *p.Name != "custom-port-name" {
 		t.Fatalf("expected port name to come from Service.PortName, got %v", p.Name)
@@ -305,11 +407,11 @@ func TestBuildEndpointSlices_PortNamePropagatedFromService(t *testing.T) {
 }
 
 func TestBuildEndpointSlices_LabelsAndNamespace(t *testing.T) {
-	nodes := []corev1.Node{node("n1", "10.0.0.1", withReadyCondition(corev1.ConditionTrue))}
 	cfg := testConfig(config.Service{Name: "kube-scheduler", Port: 10259, Protocol: corev1.ProtocolTCP, AppProtocol: "https"})
 	cfg.Namespace = "custom-ns"
+	nodes := []corev1.Node{node("n1", "10.0.0.1", withReadyCondition(corev1.ConditionTrue))}
 
-	got := endpoints.BuildEndpointSlices(nodes, cfg)
+	got := endpoints.BuildEndpointSlices(nodesFor(cfg, nodes), cfg)
 	s := got[0]
 	if s.Namespace != "custom-ns" {
 		t.Errorf("expected namespace custom-ns, got %q", s.Namespace)
@@ -328,10 +430,11 @@ func TestBuildEndpointSlices_LabelsAndNamespace(t *testing.T) {
 // --- Edge cases around IP address selection -------------------------------
 
 func TestBuildEndpointSlices_MultipleInternalIPs_FirstOneWins(t *testing.T) {
+	cfg := testConfig()
 	// Malformed/unusual but not impossible: more than one InternalIP address.
 	// Document current first-match behavior so a silent change is caught.
 	n := node("dual", "10.0.0.100", withInternalIP("10.0.0.200"), withReadyCondition(corev1.ConditionTrue))
-	got := endpoints.BuildEndpointSlices([]corev1.Node{n}, testConfig())
+	got := endpoints.BuildEndpointSlices(nodesFor(cfg, []corev1.Node{n}), cfg)
 	ep := endpointByNode(t, got[0].Endpoints, "dual")
 	if ep.Addresses[0] != "10.0.0.100" {
 		t.Errorf("expected first InternalIP (10.0.0.100) to win, got %v", ep.Addresses)
@@ -344,8 +447,9 @@ func TestBuildEndpointSlices_MultipleInternalIPs_FirstOneWins(t *testing.T) {
 // into separate slices rather than mislabeling one family as the other.)
 
 func TestBuildEndpointSlices_IPv6OnlyNode_ProducesIPv6Slice(t *testing.T) {
+	cfg := testConfig()
 	n := node("ipv6-node", "2001:db8::1", withReadyCondition(corev1.ConditionTrue))
-	got := endpoints.BuildEndpointSlices([]corev1.Node{n}, testConfig())
+	got := endpoints.BuildEndpointSlices(nodesFor(cfg, []corev1.Node{n}), cfg)
 	if len(got) != 1 {
 		t.Fatalf("expected 1 slice for an IPv6-only node set, got %d", len(got))
 	}
@@ -361,11 +465,12 @@ func TestBuildEndpointSlices_IPv6OnlyNode_ProducesIPv6Slice(t *testing.T) {
 }
 
 func TestBuildEndpointSlices_MixedIPv4AndIPv6Nodes_SplitIntoTwoSlicesPerService(t *testing.T) {
+	cfg := testConfig()
 	nodes := []corev1.Node{
 		node("v4", "10.0.0.1", withReadyCondition(corev1.ConditionTrue)),
 		node("v6", "2001:db8::1", withReadyCondition(corev1.ConditionTrue)),
 	}
-	got := endpoints.BuildEndpointSlices(nodes, testConfig())
+	got := endpoints.BuildEndpointSlices(nodesFor(cfg, nodes), cfg)
 	if len(got) != 2 {
 		t.Fatalf("expected 2 slices (one per address family) for 1 service, got %d", len(got))
 	}
@@ -407,17 +512,18 @@ func TestBuildEndpointSlices_MultipleServicesWithMixedFamilies_OneSlicePerServic
 		config.Service{Name: "svc-a", Port: 1111, Protocol: corev1.ProtocolTCP, AppProtocol: "http"},
 		config.Service{Name: "svc-b", Port: 2222, Protocol: corev1.ProtocolTCP, AppProtocol: "http"},
 	)
-	got := endpoints.BuildEndpointSlices(nodes, cfg)
+	got := endpoints.BuildEndpointSlices(nodesFor(cfg, nodes), cfg)
 	if len(got) != 4 { // 2 services x 2 families
 		t.Fatalf("expected 4 slices (2 services x 2 families), got %d", len(got))
 	}
 }
 
 func TestBuildEndpointSlices_UnparseableInternalIP_DefaultsToIPv4(t *testing.T) {
+	cfg := testConfig()
 	// Malformed but not empty -- internalIP() only checks presence, not
 	// validity, so addressFamily must degrade gracefully rather than panic.
 	n := node("garbage-ip", "not-an-ip-address", withReadyCondition(corev1.ConditionTrue))
-	got := endpoints.BuildEndpointSlices([]corev1.Node{n}, testConfig())
+	got := endpoints.BuildEndpointSlices(nodesFor(cfg, []corev1.Node{n}), cfg)
 	if len(got) != 1 || got[0].AddressType != discoveryv1.AddressTypeIPv4 {
 		t.Fatalf("expected a single IPv4-defaulted slice for an unparseable address, got %+v", got)
 	}
@@ -426,14 +532,15 @@ func TestBuildEndpointSlices_UnparseableInternalIP_DefaultsToIPv4(t *testing.T) 
 // --- Determinism / idempotency --------------------------------------------
 
 func TestBuildEndpointSlices_Idempotent(t *testing.T) {
+	cfg := testConfig(config.DefaultServices...)
 	nodes := []corev1.Node{
 		node("n1", "10.0.0.1", withReadyCondition(corev1.ConditionTrue)),
 		node("n2", "10.0.0.2", withReadyCondition(corev1.ConditionFalse)),
 	}
-	cfg := testConfig(config.DefaultServices...)
+	nbs := nodesFor(cfg, nodes)
 
-	first := endpoints.BuildEndpointSlices(nodes, cfg)
-	second := endpoints.BuildEndpointSlices(nodes, cfg)
+	first := endpoints.BuildEndpointSlices(nbs, cfg)
+	second := endpoints.BuildEndpointSlices(nbs, cfg)
 
 	if !reflect.DeepEqual(first, second) {
 		t.Fatalf("expected identical output for identical input (required for CreateOrUpdate to no-op):\nfirst:  %#v\nsecond: %#v", first, second)
@@ -446,7 +553,7 @@ func TestBuildEndpointSlices_PortPointersNotAliasedAcrossServices(t *testing.T) 
 		config.Service{Name: "svc-b", Port: 2222, Protocol: corev1.ProtocolUDP, AppProtocol: "https"},
 	)
 	nodes := []corev1.Node{node("n1", "10.0.0.1", withReadyCondition(corev1.ConditionTrue))}
-	got := endpoints.BuildEndpointSlices(nodes, cfg)
+	got := endpoints.BuildEndpointSlices(nodesFor(cfg, nodes), cfg)
 
 	byName := map[string]discoveryv1.EndpointSlice{}
 	for _, s := range got {
