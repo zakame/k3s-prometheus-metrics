@@ -110,10 +110,21 @@ and organized as:
 - `deploy/standard/`: sample manifests (namespace, RBAC, ServiceAccount,
   Deployment, ServiceMonitor, kustomization) for deploying the controller
   alongside a kube-prometheus/kube-prometheus-stack install
+- `deploy/e2e/`: kustomize overlay of `deploy/standard/` used by CI's e2e
+  suite against a k3d cluster. Not intended for end users.
 - `test/integration/`: envtest-backed tests that exercise the reconciler
   and RBAC manifests against a real (if ephemeral) `kube-apiserver`,
   complementing the unit tests under `internal/`. Run with `make
   test-integration`.
+- `test/e2e/`: build-tag-`e2e` smoke tests that exercise the running
+  controller Deployment (not envtest, not direct `Reconcile()` calls) on a
+  real cluster, polling for the Service/EndpointSlice objects it converges
+  to. Requires a cluster with `deploy/e2e` already applied and a kubeconfig
+  pointed at it; run with `go test -tags e2e ./test/e2e/...`. CI runs this
+  against a k3d cluster, since k3d runs real k3s and labels control-plane
+  nodes the way this controller expects (kind/kubeadm clusters label them
+  differently and would match zero nodes against the default
+  `--node-selector`).
 
 ### Where the Service/EndpointSlice/Endpoints objects live
 
@@ -216,13 +227,20 @@ kube-prometheus-stack install). Point it at your own image, then apply:
 
 ```bash
 make dev-image IMAGE=registry.example.com/k3s-prometheus-metrics TAG=dev
-kubectl apply -k deploy/dev/
+kubectl apply -k deploy/dev-local/
 ```
 
-`make dev-image` rewrites the `images:` override in
-`deploy/dev/kustomization.yaml` in place; leave the checked-in
-`CHANGE-ME/k3s-prometheus-metrics` placeholder there rather than committing
-your own registry.
+`make dev-image` builds and pushes a linux/amd64+linux/arm64 image via
+[`ko`](https://ko.build/) (the same tool the release path uses), then
+generates `deploy/dev-local/kustomization.yaml` -- an overlay on top of
+`deploy/dev/` pointing at your image. That file is gitignored and
+regenerated on every run, so `deploy/dev/kustomization.yaml` itself never
+needs editing or reverting. It needs registry auth already configured
+(`ko` reads the local Docker credential store, same as `docker login`).
+
+For a quick local smoke test without pushing anywhere, `make docker-build`
+still builds a single-arch image locally (`$(BINARY):dev`) with plain
+`docker build`.
 
 ### Port names and existing kube-prometheus ServiceMonitors
 
