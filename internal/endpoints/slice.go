@@ -24,24 +24,23 @@ const (
 	sliceNameSuffix = "-metrics"
 )
 
-// BuildEndpointSlices turns nodes into EndpointSlice objects in
-// cfg.Namespace: one per (service, address family) pair, since an
-// EndpointSlice's AddressType is fixed and can't mix IPv4/IPv6. Nodes
-// without a usable InternalIP are skipped. Returns nil if none qualify.
-func BuildEndpointSlices(nodes []corev1.Node, cfg config.Config) []discoveryv1.EndpointSlice {
-	byFamily := endpointsFromNodes(nodes)
-	if len(byFamily) == 0 {
-		return nil
-	}
-
-	families := make([]discoveryv1.AddressType, 0, len(byFamily))
-	for family := range byFamily {
-		families = append(families, family)
-	}
-	sort.Slice(families, func(i, j int) bool { return families[i] < families[j] })
-
-	slices := make([]discoveryv1.EndpointSlice, 0, len(cfg.Services)*len(families))
+// BuildEndpointSlices turns nodesByService (keyed by service name) into
+// EndpointSlice objects in cfg.Namespace: one per (service, address
+// family) pair, since AddressType can't mix IPv4/IPv6.
+func BuildEndpointSlices(nodesByService map[string][]corev1.Node, cfg config.Config) []discoveryv1.EndpointSlice {
+	var slices []discoveryv1.EndpointSlice
 	for _, svc := range cfg.Services {
+		byFamily := endpointsFromNodes(nodesByService[svc.Name])
+		if len(byFamily) == 0 {
+			continue
+		}
+
+		families := make([]discoveryv1.AddressType, 0, len(byFamily))
+		for family := range byFamily {
+			families = append(families, family)
+		}
+		sort.Slice(families, func(i, j int) bool { return families[i] < families[j] })
+
 		port := svc.Port
 		protocol := svc.Protocol
 		appProtocol := svc.AppProtocol
