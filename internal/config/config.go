@@ -5,13 +5,16 @@ package config
 
 import corev1 "k8s.io/api/core/v1"
 
-// Service describes a k3s-bundled control-plane component whose metrics
-// endpoint this controller exposes to Prometheus.
+// Service describes a k3s-bundled component whose metrics endpoint this
+// controller exposes to Prometheus.
 type Service struct {
 	// Name is the EndpointSlice's "kubernetes.io/service-name" label value,
 	// and the name of the selector-less Service this controller manages
 	// for Prometheus to scrape.
 	Name string
+	// NodeSelector overrides Config.NodeSelector for this Service; nil
+	// inherits it. Empty (non-nil) matches every node.
+	NodeSelector map[string]string
 	// PortName names the metrics port on the Service, EndpointSlice, and
 	// legacy Endpoints. kube-scheduler and kube-controller-manager need
 	// "https-metrics" to match kube-prometheus's stock
@@ -29,15 +32,14 @@ type Service struct {
 	AppProtocol string
 }
 
-// DefaultServices is the k3s-bundled control-plane components this
-// controller watches by default. Ports match upstream Kubernetes'
-// --secure-port defaults; k3s only changes the default bind address, not
-// the port numbers. kube-proxy has no upstream kube-prometheus
-// ServiceMonitor, so "http-metrics" is this project's own convention.
+// DefaultServices is the k3s-bundled components this controller watches by
+// default. Ports match upstream Kubernetes' --secure-port defaults.
+// kube-proxy runs on every node, not just control-plane ones, hence the
+// empty NodeSelector.
 var DefaultServices = []Service{
 	{Name: "kube-scheduler", PortName: "https-metrics", Port: 10259, Protocol: corev1.ProtocolTCP, AppProtocol: "https"},
 	{Name: "kube-controller-manager", PortName: "https-metrics", Port: 10257, Protocol: corev1.ProtocolTCP, AppProtocol: "https"},
-	{Name: "kube-proxy", PortName: "http-metrics", Port: 10249, Protocol: corev1.ProtocolTCP, AppProtocol: "http"},
+	{Name: "kube-proxy", PortName: "http-metrics", Port: 10249, Protocol: corev1.ProtocolTCP, AppProtocol: "http", NodeSelector: map[string]string{}},
 }
 
 // ControlPlaneNodeSelector is the standard label key for control-plane
@@ -54,8 +56,8 @@ type Config struct {
 	// Services to live; independent of the controller Deployment's own
 	// namespace.
 	Namespace string
-	// NodeSelector restricts which nodes are treated as control-plane
-	// nodes and included as endpoints.
+	// NodeSelector is the default node selector for any Service that
+	// doesn't set its own (see Service.NodeSelector).
 	NodeSelector map[string]string
 	// WriteLegacyEndpoints also creates/updates v1 Endpoints objects
 	// alongside EndpointSlices, for Kubernetes clusters older than 1.33.
