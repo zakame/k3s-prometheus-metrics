@@ -46,9 +46,14 @@ Run the same checks CI runs on every pull request, and make sure they pass:
 - `make test-integration` (envtest-backed reconciler/RBAC tests in
   `test/integration/`; downloads a pinned `kube-apiserver`/`etcd` via
   `setup-envtest` on first run).
+- If you touched the reconciler, `deploy/e2e/`, or `test/e2e/` itself, run
+  `make test-e2e` against a real cluster, with `deploy/e2e` already applied
+  to a k3d cluster (CI does this automatically; it's not part of `make
+  test`/`make test-integration`).
 - Validate manifests build cleanly, e.g.
-  `go run sigs.k8s.io/kustomize/kustomize/v5@v5.8.1 build deploy/standard | kubectl apply --dry-run=client --validate=true -f -`
-  (and the same for `deploy/dev`) if you touched anything under `deploy/`.
+  `go run sigs.k8s.io/kustomize/kustomize/v5@v5.8.1 build deploy/standard | go run github.com/yannh/kubeconform/cmd/kubeconform@v0.8.0 -summary -ignore-missing-schemas`
+  (and the same for `deploy/dev` and `deploy/e2e`) if you touched anything
+  under `deploy/`.
 
 Also:
 
