@@ -264,3 +264,37 @@ func TestReconcile_DoesNotAdoptForeignEndpointSlice(t *testing.T) {
 		t.Fatalf("foreign EndpointSlice's managed-by label was overwritten: %q", refetched.Labels[discoveryv1.LabelManagedBy])
 	}
 }
+
+func TestReconcile_KubeProxyIncludesAgentNodes_ControlPlaneServicesDoNot(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), reconcileTimeout)
+	defer cancel()
+
+	id := testID(t)
+	cpLabel := map[string]string{"role-" + id: "control-plane"}
+	createNode(t, ctx, "cp-"+id, "10.20.0.1", true, withExtraLabels(cpLabel))
+	// No control-plane label -- kube-proxy's empty NodeSelector must still pick it up.
+	createNode(t, ctx, "agent-"+id, "10.20.0.2", true)
+
+	cfg := config.Config{
+		Namespace:    testNamespace,
+		NodeSelector: cpLabel,
+		Services:     config.DefaultServices,
+	}
+	reconcile(t, ctx, cfg)
+
+	proxy := getEndpointSlice(t, ctx, "kube-proxy-metrics")
+	if len(proxy.Endpoints) != 2 {
+		t.Fatalf("expected kube-proxy-metrics to include both the control-plane and agent node, got %d endpoints: %+v",
+			len(proxy.Endpoints), proxy.Endpoints)
+	}
+
+	sched := getEndpointSlice(t, ctx, "kube-scheduler-metrics")
+	if len(sched.Endpoints) != 1 || *sched.Endpoints[0].NodeName != "cp-"+id {
+		t.Fatalf("expected kube-scheduler-metrics to include only the control-plane node, got %+v", sched.Endpoints)
+	}
+
+	cm := getEndpointSlice(t, ctx, "kube-controller-manager-metrics")
+	if len(cm.Endpoints) != 1 || *cm.Endpoints[0].NodeName != "cp-"+id {
+		t.Fatalf("expected kube-controller-manager-metrics to include only the control-plane node, got %+v", cm.Endpoints)
+	}
+}
