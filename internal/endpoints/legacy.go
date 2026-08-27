@@ -8,33 +8,18 @@ import (
 	"github.com/zakame/k3s-prometheus-metrics/internal/config"
 )
 
-// BuildEndpoints turns nodes into one legacy v1 Endpoints object per
-// service, for Kubernetes clusters older than 1.33. v1 Endpoints has no
-// per-address Ready condition, so not-ready nodes go in NotReadyAddresses
-// instead, which most legacy consumers don't scrape by default.
-func BuildEndpoints(nodes []corev1.Node, cfg config.Config) []corev1.Endpoints { //nolint:staticcheck // SA1019: intentional legacy support for Kubernetes <1.33
-	var ready, notReady []corev1.EndpointAddress
-	for i := range nodes {
-		node := &nodes[i]
-		addr, ok := internalIP(node)
-		if !ok {
+// BuildEndpoints turns nodesByService (see BuildEndpointSlices) into one
+// legacy v1 Endpoints object per service, for Kubernetes clusters older
+// than 1.33. Not-ready nodes go in NotReadyAddresses, which most legacy
+// consumers don't scrape by default.
+func BuildEndpoints(nodesByService map[string][]corev1.Node, cfg config.Config) []corev1.Endpoints { //nolint:staticcheck // SA1019: intentional legacy support for Kubernetes <1.33
+	var all []corev1.Endpoints
+	for _, svc := range cfg.Services {
+		ready, notReady := splitByReadiness(nodesByService[svc.Name])
+		if len(ready) == 0 && len(notReady) == 0 {
 			continue
 		}
 
-		nodeName := node.Name
-		ea := corev1.EndpointAddress{IP: addr, NodeName: &nodeName}
-		if isReady(node) {
-			ready = append(ready, ea)
-		} else {
-			notReady = append(notReady, ea)
-		}
-	}
-	if len(ready) == 0 && len(notReady) == 0 {
-		return nil
-	}
-
-	all := make([]corev1.Endpoints, 0, len(cfg.Services))
-	for _, svc := range cfg.Services {
 		all = append(all, corev1.Endpoints{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      svc.Name,
@@ -61,4 +46,25 @@ func BuildEndpoints(nodes []corev1.Node, cfg config.Config) []corev1.Endpoints {
 		})
 	}
 	return all
+}
+
+// splitByReadiness splits nodes into ready/not-ready v1 EndpointAddresses,
+// per the same isReady rule EndpointSlice uses.
+func splitByReadiness(nodes []corev1.Node) (ready, notReady []corev1.EndpointAddress) {
+	for i := range nodes {
+		node := &nodes[i]
+		addr, ok := internalIP(node)
+		if !ok {
+			continue
+		}
+
+		nodeName := node.Name
+		ea := corev1.EndpointAddress{IP: addr, NodeName: &nodeName}
+		if isReady(node) {
+			ready = append(ready, ea)
+		} else {
+			notReady = append(notReady, ea)
+		}
+	}
+	return ready, notReady
 }
