@@ -1,0 +1,45 @@
+# e2e overlay: a bare k3d cluster has no live kube-prometheus-stack, so
+# unlike deploy/dev, this overlay keeps deploy/standard's Namespace (nothing
+# else creates it) but still drops the ServiceMonitors, since their CRD
+# isn't installed either.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+- ../standard
+
+patches:
+- patch: |-
+    $patch: delete
+    apiVersion: monitoring.coreos.com/v1
+    kind: ServiceMonitor
+    metadata:
+      name: kube-scheduler
+      namespace: monitoring
+- patch: |-
+    $patch: delete
+    apiVersion: monitoring.coreos.com/v1
+    kind: ServiceMonitor
+    metadata:
+      name: kube-controller-manager
+      namespace: monitoring
+- patch: |-
+    $patch: delete
+    apiVersion: monitoring.coreos.com/v1
+    kind: ServiceMonitor
+    metadata:
+      name: kube-proxy
+      namespace: monitoring
+# The image is loaded directly into the cluster, never pulled.
+- patch: |-
+    - op: add
+      path: /spec/template/spec/containers/0/imagePullPolicy
+      value: Never
+  target:
+    kind: Deployment
+    name: k3s-prometheus-metrics
+
+images:
+- name: ghcr.io/zakame/k3s-prometheus-metrics
+  newName: k3s-prometheus-metrics
+  newTag: e2e
