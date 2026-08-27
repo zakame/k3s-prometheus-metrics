@@ -1,6 +1,6 @@
 // Package controller contains the Node reconciler that drives Service,
-// EndpointSlice, and (optionally) legacy Endpoints objects to reflect the
-// current set of control-plane nodes.
+// EndpointSlice, and (optionally) legacy Endpoints objects to reflect
+// each watched service's own qualifying node set.
 package controller
 
 import (
@@ -10,6 +10,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -44,25 +45,25 @@ type NodeReconciler struct {
 	LegacyClient client.Client
 }
 
-// Reconcile implements reconcile.Reconciler. It ignores the incoming
-// request's identity and always recomputes desired state from the full set
-// of matching nodes, since every service's EndpointSlice/Endpoints must
-// reflect the same node set.
+// Reconcile implements reconcile.Reconciler, ignoring the incoming
+// request's identity and always recomputing desired state.
 func (r *NodeReconciler) Reconcile(ctx context.Context, _ ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
-	var nodeList corev1.NodeList
-	if err := r.List(ctx, &nodeList, client.MatchingLabels(r.Config.NodeSelector)); err != nil {
-		return ctrl.Result{}, fmt.Errorf("listing nodes: %w", err)
+	nodesByService, err := r.listNodesByService(ctx)
+	if err != nil {
+		return ctrl.Result{}, err
 	}
-	logger.V(1).Info("discovered control-plane nodes", "names", nodeNames(nodeList.Items))
+	for name, nodes := range nodesByService {
+		logger.V(1).Info("discovered nodes", "service", name, "names", nodeNames(nodes))
+	}
 
 	svcs, err := r.applyServices(ctx)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 
-	slices := endpoints.BuildEndpointSlices(nodeList.Items, r.Config)
+	slices := endpoints.BuildEndpointSlices(nodesByService, r.Config)
 	if err := r.ownEndpointSlices(slices, svcs); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -73,7 +74,7 @@ func (r *NodeReconciler) Reconcile(ctx context.Context, _ ctrl.Request) (ctrl.Re
 	slicesCount := len(slices)
 	epsCount := 0
 	if r.Config.WriteLegacyEndpoints {
-		eps := endpoints.BuildEndpoints(nodeList.Items, r.Config) //nolint:staticcheck // SA1019: intentional legacy support for Kubernetes <1.33
+		eps := endpoints.BuildEndpoints(nodesByService, r.Config) //nolint:staticcheck // SA1019: intentional legacy support for Kubernetes <1.33
 		if err := r.ownEndpoints(eps, svcs); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -83,9 +84,34 @@ func (r *NodeReconciler) Reconcile(ctx context.Context, _ ctrl.Request) (ctrl.Re
 		epsCount = len(eps)
 	}
 
-	logger.V(1).Info("reconciled control-plane endpoints",
-		"nodes", len(nodeList.Items), "endpointSlices", slicesCount, "legacyEndpoints", epsCount)
+	logger.V(1).Info("reconciled endpoints", "endpointSlices", slicesCount, "legacyEndpoints", epsCount)
 	return ctrl.Result{}, nil
+}
+
+// listNodesByService lists nodes once per distinct node selector, then
+// returns each service's matching nodes by name.
+func (r *NodeReconciler) listNodesByService(ctx context.Context) (map[string][]corev1.Node, error) {
+	byService := make(map[string][]corev1.Node, len(r.Config.Services))
+	bySelector := map[string][]corev1.Node{}
+	for _, svc := range r.Config.Services {
+		sel := svc.NodeSelector
+		if sel == nil {
+			sel = r.Config.NodeSelector
+		}
+
+		key := labels.Set(sel).String()
+		nodes, ok := bySelector[key]
+		if !ok {
+			var nodeList corev1.NodeList
+			if err := r.List(ctx, &nodeList, client.MatchingLabels(sel)); err != nil {
+				return nil, fmt.Errorf("listing nodes for %s: %w", svc.Name, err)
+			}
+			nodes = nodeList.Items
+			bySelector[key] = nodes
+		}
+		byService[svc.Name] = nodes
+	}
+	return byService, nil
 }
 
 // applyServices creates/updates the selector-less Service per
