@@ -60,6 +60,26 @@ func eventuallyEndpointSlice(t *testing.T, ctx context.Context, name string) *di
 	return &es
 }
 
+// eventuallyEndpoints polls for name in serviceNamespace, mirroring
+// eventuallyEndpointSlice above but for the legacy v1 Endpoints object
+// internal/endpoints/legacy.go's BuildEndpoints produces when
+// --write-legacy-endpoints is set.
+func eventuallyEndpoints(t *testing.T, ctx context.Context, name string) *corev1.Endpoints { //nolint:staticcheck // SA1019: intentional legacy support for Kubernetes <1.33
+	t.Helper()
+	var ep corev1.Endpoints //nolint:staticcheck // SA1019: intentional legacy support for Kubernetes <1.33
+	err := wait.PollUntilContextTimeout(ctx, pollInterval, pollTimeout, true, func(ctx context.Context) (bool, error) {
+		err := k8sClient.Get(ctx, types.NamespacedName{Namespace: serviceNamespace, Name: name}, &ep)
+		if apierrors.IsNotFound(err) {
+			return false, nil
+		}
+		return err == nil, err
+	})
+	if err != nil {
+		t.Fatalf("waiting for Endpoints %s/%s: %v", serviceNamespace, name, err)
+	}
+	return &ep
+}
+
 func eventuallyService(t *testing.T, ctx context.Context, name string) *corev1.Service {
 	t.Helper()
 	var svc corev1.Service
