@@ -46,14 +46,18 @@ Run the same checks CI runs on every pull request, and make sure they pass:
 - `make test-integration` (envtest-backed reconciler/RBAC tests in
   `test/integration/`; downloads a pinned `kube-apiserver`/`etcd` via
   `setup-envtest` on first run).
-- If you touched the reconciler, `deploy/e2e/`, or `test/e2e/` itself, run
-  `make test-e2e` against a real cluster, with `deploy/e2e` already applied
-  to a k3d cluster (CI does this automatically; it's not part of `make
-  test`/`make test-integration`).
+- If you touched the reconciler, `deploy/e2e/`, `deploy/e2e-legacy/`, or
+  `test/e2e/` itself, run `make test-e2e` against a real cluster: plain
+  `make test-e2e` against a cluster with `deploy/e2e` applied covers the
+  default EndpointSlice-only path; `E2E_LEGACY_ENDPOINTS=true make
+  test-e2e` against a cluster with `deploy/e2e-legacy` applied covers the
+  legacy `v1` Endpoints path too (that test skips harmlessly without the
+  env var set). CI runs both automatically; neither is part of `make
+  test`/`make test-integration`.
 - Validate manifests build cleanly, e.g.
   `go run sigs.k8s.io/kustomize/kustomize/v5 build deploy/standard | go run github.com/yannh/kubeconform/cmd/kubeconform -summary -ignore-missing-schemas`
-  (and the same for `deploy/dev` and `deploy/e2e`) if you touched anything
-  under `deploy/`.
+  (and the same for `deploy/dev`, `deploy/e2e`, and `deploy/e2e-legacy`) if
+  you touched anything under `deploy/`.
 
 Also:
 

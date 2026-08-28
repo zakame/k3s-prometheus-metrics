@@ -110,21 +110,27 @@ and organized as:
 - `deploy/standard/`: sample manifests (namespace, RBAC, ServiceAccount,
   Deployment, ServiceMonitor, kustomization) for deploying the controller
   alongside a kube-prometheus/kube-prometheus-stack install
-- `deploy/e2e/`: kustomize overlay of `deploy/standard/` used by CI's e2e
-  suite against a k3d cluster. Not intended for end users.
+- `deploy/e2e/`, `deploy/e2e-legacy/`: kustomize overlays of
+  `deploy/standard/` used by CI's e2e suite against a k3d cluster;
+  `deploy/e2e-legacy/` additionally sets `--write-legacy-endpoints`, for the
+  legacy `v1` Endpoints leg. Not intended for end users.
 - `test/integration/`: envtest-backed tests that exercise the reconciler
   and RBAC manifests against a real (if ephemeral) `kube-apiserver`,
   complementing the unit tests under `internal/`. Run with `make
   test-integration`.
 - `test/e2e/`: build-tag-`e2e` smoke tests that exercise the running
   controller Deployment (not envtest, not direct `Reconcile()` calls) on a
-  real cluster, polling for the Service/EndpointSlice objects it converges
-  to. Requires a cluster with `deploy/e2e` already applied and a kubeconfig
-  pointed at it; run with `go test -tags e2e ./test/e2e/...`. CI runs this
-  against a k3d cluster, since k3d runs real k3s and labels control-plane
-  nodes the way this controller expects (kind/kubeadm clusters label them
-  differently and would match zero nodes against the default
-  `--node-selector`).
+  real cluster, polling for the Service/EndpointSlice (and, with
+  `E2E_LEGACY_ENDPOINTS=true`, legacy Endpoints) objects it converges to.
+  Requires a cluster with `deploy/e2e` (or `deploy/e2e-legacy`) already
+  applied and a kubeconfig pointed at it; run with `go test -tags e2e
+  ./test/e2e/...`. CI runs this against a k3d cluster, since k3d runs real
+  k3s and labels control-plane nodes the way this controller expects
+  (kind/kubeadm clusters label them differently and would match zero nodes
+  against the default `--node-selector`), as a two-leg matrix: one against a
+  current k3s version applying `deploy/e2e` (default EndpointSlice-only
+  path), one against a pre-1.33 k3s version applying `deploy/e2e-legacy`
+  with `E2E_LEGACY_ENDPOINTS=true` (legacy Endpoints path).
 
 ### Where the Service/EndpointSlice/Endpoints objects live
 
