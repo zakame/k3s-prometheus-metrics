@@ -1,0 +1,17 @@
+# e2e-legacy overlay: same as deploy/e2e, but also passes
+# --write-legacy-endpoints, for exercising the legacy v1 Endpoints path
+# against an older (pre-1.33) Kubernetes API server in CI.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+- ../e2e
+
+patches:
+- patch: |-
+    - op: add
+      path: /spec/template/spec/containers/0/args/-
+      value: --write-legacy-endpoints
+  target:
+    kind: Deployment
+    name: k3s-prometheus-metrics
