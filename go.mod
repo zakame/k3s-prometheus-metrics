@@ -3,7 +3,7 @@ module github.com/zakame/k3s-prometheus-metrics
 go 1.27.0
 
 require (
-	k8s.io/api v0.36.0
+	k8s.io/api v0.36.4
 	k8s.io/apimachinery v0.36.4
 	k8s.io/client-go v0.36.0
 	k8s.io/utils v0.0.0-20260319190234-28399d86e0b5
