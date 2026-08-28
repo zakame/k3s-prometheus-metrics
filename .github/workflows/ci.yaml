@@ -75,9 +75,28 @@ jobs:
     - run: >-
         go run sigs.k8s.io/kustomize/kustomize/v5 build deploy/e2e
         | go run github.com/yannh/kubeconform/cmd/kubeconform -summary -ignore-missing-schemas
+    - run: >-
+        go run sigs.k8s.io/kustomize/kustomize/v5 build deploy/e2e-legacy
+        | go run github.com/yannh/kubeconform/cmd/kubeconform -summary -ignore-missing-schemas
 
   e2e:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        # v1.36 is current, so this leg exercises the default (EndpointSlice-only)
+        # path; v1.31 predates the 1.33 Endpoints deprecation, so this leg
+        # enables --write-legacy-endpoints and exercises that path too.
+        - name: current
+          k3s-image: rancher/k3s:v1.36.4-k3s1
+          overlay: deploy/e2e
+          write-legacy-endpoints: false
+        - name: legacy-endpoints
+          k3s-image: rancher/k3s:v1.31.14-k3s1
+          overlay: deploy/e2e-legacy
+          write-legacy-endpoints: true
+    name: e2e (${{ matrix.name }})
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -88,11 +107,13 @@ jobs:
       # k3s binaries, so it actually exercises this controller's k3s-specific
       # assumptions.
       run: curl -sf https://raw.githubusercontent.com/k3d-io/k3d/v5.9.0/install.sh | TAG=v5.9.0 bash
-    - run: k3d cluster create k3s-prometheus-metrics --wait
+    - run: k3d cluster create k3s-prometheus-metrics --image ${{ matrix.k3s-image }} --wait
     - run: >-
         KO_DOCKER_REPO=k3s-prometheus-metrics
         go run github.com/google/ko@v0.19.1 build --local --bare -t e2e ./cmd/k3s-prometheus-metrics
     - run: k3d image import k3s-prometheus-metrics:e2e -c k3s-prometheus-metrics
-    - run: kubectl apply -k deploy/e2e
+    - run: kubectl apply -k ${{ matrix.overlay }}
     - run: kubectl -n monitoring rollout status deployment/k3s-prometheus-metrics --timeout=60s
     - run: go test -tags e2e -v -timeout 20m ./test/e2e/...
+      env:
+        E2E_LEGACY_ENDPOINTS: ${{ matrix.write-legacy-endpoints }}
