@@ -58,10 +58,24 @@ archives:
 
 changelog:
   sort: asc
+  # Scoped Commits (CONTRIBUTING.md): subjects are "<scope>: <description>",
+  # where scope is a file/dir path, not a change-type keyword -- exclude
+  # patterns below match the scope prefix, not "docs:"/"test:" literally.
   filters:
     exclude:
-      - "^docs:"
-      - "^test:"
+      - '^test/'
+      - '^\.github/'
+      - '^\.goreleaser'
+      - '^Dockerfile:'
+      - '^Makefile:'
+      - '^README'
+      - '^CONTRIBUTING'
+  groups:
+    - title: Deployment
+      regexp: '^deploy/'
+      order: 1
+    - title: Changes
+      order: 999
 
 release:
   footer: >-
