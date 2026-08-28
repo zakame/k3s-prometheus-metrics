@@ -4,11 +4,13 @@ BINARY              := k3s-prometheus-metrics
 CMD                 := ./cmd/$(BINARY)
 BIN_DIR             := ./bin
 CGO_ENABLED         ?= 0
-CONTROLLER_GEN_VERSION := v0.21.0
 RBAC_PATHS          := ./internal/controller/...
 RBAC_OUT            := deploy/standard
-ENVTEST_VERSION     := v0.24.1
 ENVTEST_K8S_VERSION := 1.36.2
+# ko is pinned by @version, not a go.mod tool directive: it (via its
+# sigstore/cosign dependency) forces k8s.io/api,apimachinery,client-go
+# ahead of what this controller otherwise needs, which the other dev tools
+# don't.
 KO_VERSION          := v0.19.1
 DEV_PLATFORMS       := linux/amd64,linux/arm64
 DEV_PLACEHOLDER     := CHANGE-ME/k3s-prometheus-metrics
@@ -33,7 +35,7 @@ test: ## Run all tests
 	go test -v -count=1 ./...
 
 test-integration: ## Run envtest-backed integration tests (test/integration/, build tag integration)
-	KUBEBUILDER_ASSETS="$$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest@$(ENVTEST_VERSION) use $(ENVTEST_K8S_VERSION) -p path)" \
+	KUBEBUILDER_ASSETS="$$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest use $(ENVTEST_K8S_VERSION) -p path)" \
 		go test -tags integration -v -count=1 ./test/integration/...
 
 test-e2e: ## Run e2e tests (test/e2e/, build tag e2e); needs a real cluster with deploy/e2e already applied
@@ -58,7 +60,7 @@ fmt: ## Check formatting (exits non-zero if files need formatting)
 	@test -z "$$(gofmt -l .)" || (gofmt -l . && exit 1)
 
 manifests: ## Generate deploy/standard/role.yaml from +kubebuilder:rbac markers
-	go run sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_GEN_VERSION) \
+	go run sigs.k8s.io/controller-tools/cmd/controller-gen \
 		rbac:roleName=$(BINARY) \
 		paths="$(RBAC_PATHS)" \
 		output:rbac:artifacts:config=$(RBAC_OUT)
