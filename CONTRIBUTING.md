@@ -51,7 +51,7 @@ Run the same checks CI runs on every pull request, and make sure they pass:
   to a k3d cluster (CI does this automatically; it's not part of `make
   test`/`make test-integration`).
 - Validate manifests build cleanly, e.g.
-  `go run sigs.k8s.io/kustomize/kustomize/v5@v5.8.1 build deploy/standard | go run github.com/yannh/kubeconform/cmd/kubeconform@v0.8.0 -summary -ignore-missing-schemas`
+  `go run sigs.k8s.io/kustomize/kustomize/v5 build deploy/standard | go run github.com/yannh/kubeconform/cmd/kubeconform -summary -ignore-missing-schemas`
   (and the same for `deploy/dev` and `deploy/e2e`) if you touched anything
   under `deploy/`.
 
