@@ -28,9 +28,8 @@ jobs:
     - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
       with:
         go-version-file: go.mod
-    - # gotestsum v0.13.0
-      run: >-
-        go run gotest.tools/gotestsum@c4a0df2e75a225d979a444342dd3db752b53619f
+    - run: >-
+        go run gotest.tools/gotestsum
         --jsonfile unit-tests.json
         --format testdox
         --
@@ -50,7 +49,7 @@ jobs:
       with:
         go-version-file: go.mod
     - run: >-
-        echo "KUBEBUILDER_ASSETS=$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest@v0.24.1 use 1.36.2 -p path)"
+        echo "KUBEBUILDER_ASSETS=$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest use 1.36.2 -p path)"
         >> "$GITHUB_ENV"
     - run: go test -tags integration -v -timeout 20m ./test/integration/...
 
@@ -68,14 +67,14 @@ jobs:
       # -ignore-missing-schemas skips CRD kinds like ServiceMonitor that it
       # has no schema for.
       run: >-
-        go run sigs.k8s.io/kustomize/kustomize/v5@v5.8.1 build deploy/standard
-        | go run github.com/yannh/kubeconform/cmd/kubeconform@v0.8.0 -summary -ignore-missing-schemas
+        go run sigs.k8s.io/kustomize/kustomize/v5 build deploy/standard
+        | go run github.com/yannh/kubeconform/cmd/kubeconform -summary -ignore-missing-schemas
     - run: >-
-        go run sigs.k8s.io/kustomize/kustomize/v5@v5.8.1 build deploy/dev
-        | go run github.com/yannh/kubeconform/cmd/kubeconform@v0.8.0 -summary -ignore-missing-schemas
+        go run sigs.k8s.io/kustomize/kustomize/v5 build deploy/dev
+        | go run github.com/yannh/kubeconform/cmd/kubeconform -summary -ignore-missing-schemas
     - run: >-
-        go run sigs.k8s.io/kustomize/kustomize/v5@v5.8.1 build deploy/e2e
-        | go run github.com/yannh/kubeconform/cmd/kubeconform@v0.8.0 -summary -ignore-missing-schemas
+        go run sigs.k8s.io/kustomize/kustomize/v5 build deploy/e2e
+        | go run github.com/yannh/kubeconform/cmd/kubeconform -summary -ignore-missing-schemas
 
   e2e:
     runs-on: ubuntu-latest
