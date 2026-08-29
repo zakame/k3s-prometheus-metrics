@@ -41,6 +41,7 @@ require (
 	github.com/go-openapi/swag/yamlutils v0.26.0 // indirect
 	github.com/go-openapi/testify/enable/yaml/v2 v2.5.1 // indirect
 	github.com/gobuffalo/flect v1.0.3 // indirect
+	github.com/golangci/misspell v0.8.0 // indirect
 	github.com/google/gnostic-models v0.7.1 // indirect
 	github.com/google/pprof v0.0.0-20260402051712-545e8a4df936 // indirect
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510 // indirect
@@ -114,6 +115,7 @@ require (
 )
 
 tool (
+	github.com/golangci/misspell/cmd/misspell
 	github.com/yannh/kubeconform/cmd/kubeconform
 	gotest.tools/gotestsum
 	sigs.k8s.io/controller-runtime/tools/setup-envtest
