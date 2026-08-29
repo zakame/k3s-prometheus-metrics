@@ -15,6 +15,29 @@ cluster.
 [kube-prometheus]: https://github.com/prometheus-operator/kube-prometheus
 [kube-prometheus-stack]: https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack
 
+Here's how the pieces fit together (details on each step are in
+[Architecture](#architecture) below):
+
+```mermaid
+flowchart TB
+    Node["Node objects\n(control-plane readiness,\nlabels, IPs)"]
+    Controller["k3s-prometheus-metrics\ncontroller"]
+    Service["Service\n(kube-system, selector-less)"]
+    EndpointSlice["EndpointSlice\n(discovery.k8s.io/v1)"]
+    Endpoints["Endpoints (v1, optional\n--write-legacy-endpoints)"]
+    ServiceMonitor["ServiceMonitor\n(selects the Service)"]
+    Prometheus["Prometheus"]
+
+    Node -- watched by --> Controller
+    Controller -- creates & owns --> Service
+    Service -- ownerReference --> EndpointSlice
+    Service -- ownerReference --> Endpoints
+    ServiceMonitor -- selects --> Service
+    ServiceMonitor -- configures scrape jobs in --> Prometheus
+    EndpointSlice -- supplies target IP:ports to --> Prometheus
+    Prometheus -- scrapes metrics port on --> Node
+```
+
 ## Background
 
 Unlike upstream Kubernetes, k3s does not ship Services/EndpointSlices for
@@ -72,7 +95,7 @@ These ports are stable and version-independent. The older insecure ports
 (10251/10252) were removed upstream in Kubernetes 1.22/1.23, so this
 controller does not fall back to them.
 
-##### Features:
+### Features
 
 - Watches Node objects and tracks control-plane readiness automatically.
   No static target lists to maintain as nodes join, leave, or change role.
@@ -82,61 +105,6 @@ controller does not fall back to them.
   older than 1.33
 - Designed to be scraped like a normal upstream Kubernetes control plane.
   No custom relabeling required in kube-prometheus/kube-prometheus-stack.
-
-## Architecture
-
-The controller is built on [controller-runtime](https://github.com/kubernetes-sigs/controller-runtime).
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the package layout and
-test suite organization. The rest of this section covers what operators
-need to know about the objects the controller manages.
-
-### Where the Service/EndpointSlice/Endpoints objects live
-
-The controller Deployment itself runs wherever you place it (e.g. a
-`monitoring` namespace), but the Service, EndpointSlice, and Endpoints
-objects it manages are created in **`kube-system`**, not the controller's
-own namespace. That matches upstream kubeadm clusters, where kube-prometheus
-and kube-prometheus-stack's bundled ServiceMonitors already expect to find
-`kube-scheduler`, `kube-proxy`, and `kube-controller-manager` Services in
-`kube-system`.
-
-The Service matters even though nothing ever sends traffic through it: a
-Prometheus Operator `ServiceMonitor` (a custom resource that tells
-Prometheus which Services to scrape, and how) selects a Service by its
-labels, not an EndpointSlice directly. Without a Service to select on, a
-`ServiceMonitor` has nothing to attach to, no matter how correct the
-EndpointSlice's target list is. So this controller creates a normal-looking
-Service for each of kube-scheduler, kube-controller-manager, and kube-proxy,
-except with no `spec.selector`, since nothing is pod-backed here, unlike
-a typical Service that fronts a Deployment's Pods. It then owns the
-EndpointSlice (and, if enabled, the legacy Endpoints object) that supplies
-that Service's actual targets, via a controller `ownerReference`:
-Kubernetes's built-in parent/child link for garbage collection, so
-deleting the Service is enough to delete the EndpointSlice/Endpoints too,
-with nothing left behind. The controller creates and owns all of this
-itself, so existing kube-prometheus/kube-prometheus-stack ServiceMonitors
-pick up the targets with no relabeling changes and no separate manifest to
-apply for the Services.
-
-```mermaid
-flowchart TB
-    Node["Node objects\n(control-plane readiness,\nlabels, IPs)"]
-    Controller["k3s-prometheus-metrics\ncontroller"]
-    Service["Service\n(kube-system, selector-less)"]
-    EndpointSlice["EndpointSlice\n(discovery.k8s.io/v1)"]
-    Endpoints["Endpoints (v1, optional\n--write-legacy-endpoints)"]
-    ServiceMonitor["ServiceMonitor\n(selects the Service)"]
-    Prometheus["Prometheus"]
-
-    Node -- watched by --> Controller
-    Controller -- creates & owns --> Service
-    Service -- ownerReference --> EndpointSlice
-    Service -- ownerReference --> Endpoints
-    ServiceMonitor -- selects --> Service
-    ServiceMonitor -- configures scrape jobs in --> Prometheus
-    EndpointSlice -- supplies target IP:ports to --> Prometheus
-    Prometheus -- scrapes metrics port on --> Node
-```
 
 ## Installation
 
@@ -211,7 +179,7 @@ kubectl apply -k deploy/standard/
 
 The `kube-scheduler`, `kube-controller-manager`, and `kube-proxy` Service
 objects themselves aren't part of these manifests: the controller creates
-and owns them on first reconcile (see [Architecture](#architecture) above).
+and owns them on first reconcile (see [Architecture](#architecture) below).
 
 ### Local/dev testing: `deploy/dev/`
 
@@ -334,6 +302,43 @@ most likely means the metrics port isn't actually bound to a non-loopback
 address yet (see [Enabling the metrics ports on
 k3s](#enabling-the-metrics-ports-on-k3s)), or the Prometheus RBAC
 prerequisite above isn't satisfied.
+
+## Architecture
+
+The controller is built on [controller-runtime](https://github.com/kubernetes-sigs/controller-runtime).
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the package layout and
+test suite organization. The rest of this section covers what operators
+need to know about the objects the controller manages.
+
+### Where the Service/EndpointSlice/Endpoints objects live
+
+The controller Deployment itself runs wherever you place it (e.g. a
+`monitoring` namespace), but the Service, EndpointSlice, and Endpoints
+objects it manages are created in **`kube-system`**, not the controller's
+own namespace. That matches upstream kubeadm clusters, where kube-prometheus
+and kube-prometheus-stack's bundled ServiceMonitors already expect to find
+`kube-scheduler`, `kube-proxy`, and `kube-controller-manager` Services in
+`kube-system`.
+
+The Service matters even though nothing ever sends traffic through it: a
+Prometheus Operator `ServiceMonitor` (a custom resource that tells
+Prometheus which Services to scrape, and how) selects a Service by its
+labels, not an EndpointSlice directly. Without a Service to select on, a
+`ServiceMonitor` has nothing to attach to, no matter how correct the
+EndpointSlice's target list is. So this controller creates a normal-looking
+Service for each of kube-scheduler, kube-controller-manager, and kube-proxy,
+except with no `spec.selector`, since nothing is pod-backed here, unlike
+a typical Service that fronts a Deployment's Pods. It then owns the
+EndpointSlice (and, if enabled, the legacy Endpoints object) that supplies
+that Service's actual targets, via a controller `ownerReference`:
+Kubernetes's built-in parent/child link for garbage collection, so
+deleting the Service is enough to delete the EndpointSlice/Endpoints too,
+with nothing left behind. The controller creates and owns all of this
+itself, so existing kube-prometheus/kube-prometheus-stack ServiceMonitors
+pick up the targets with no relabeling changes and no separate manifest to
+apply for the Services. See the diagram near the top of this README for
+how these objects, the controller, and Prometheus's `ServiceMonitor` all
+connect.
 
 ## License
 
