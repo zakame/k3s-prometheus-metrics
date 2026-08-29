@@ -122,6 +122,7 @@ docker pull ghcr.io/zakame/k3s-prometheus-metrics:master
 ### Building from Source
 
 Requirements:
+
 - Go 1.27 or later
 
 ```bash
