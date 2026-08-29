@@ -10,7 +10,7 @@ and how the test suites are organized before making changes.
 This repository follows the [Scoped Commits](https://scopedcommits.com/)
 convention instead of Conventional Commits. Every commit subject has the form:
 
-```
+```text
 <scope>: <description>
 ```
 
@@ -24,7 +24,7 @@ into multiple commits, one per scope.
 
 ### Examples
 
-```
+```text
 internal/endpoints: derive EndpointSlice AddressType from actual address family
 deploy/standard: scope RBAC to least privilege, add leader-election Role, fix image tag
 Makefile: add build/test/lint/manifests/docker-build targets
