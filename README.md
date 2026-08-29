@@ -3,12 +3,14 @@
 This is a Kubernetes controller that watches Node objects on a
 [k3s](https://k3s.io/) cluster and creates/updates
 [`discovery.k8s.io/v1` EndpointSlice](https://kubernetes.io/docs/concepts/services-networking/endpoint-slices/)
-objects (and optionally legacy `v1` Endpoints, for Kubernetes older than
-1.33) pointing at the kube-scheduler, kube-proxy, and
-kube-controller-manager metrics ports on each control-plane node. That lets
-an in-cluster Prometheus (via [kube-prometheus] jsonnet or the
-[kube-prometheus-stack] Helm chart) scrape control-plane metrics the same
-way it would on a normal upstream Kubernetes cluster.
+objects (a list of IP:port targets behind a Service, and the modern
+replacement for the older `v1` Endpoints API; optionally this controller
+also writes legacy `v1` Endpoints, for Kubernetes older than 1.33) pointing
+at the kube-scheduler, kube-proxy, and kube-controller-manager metrics
+ports on each control-plane node. That lets an in-cluster Prometheus (via
+[kube-prometheus] jsonnet or the [kube-prometheus-stack] Helm chart) scrape
+control-plane metrics the same way it would on a normal upstream Kubernetes
+cluster.
 
 [kube-prometheus]: https://github.com/prometheus-operator/kube-prometheus
 [kube-prometheus-stack]: https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack
@@ -92,15 +94,21 @@ and organized as:
   add/update/delete events and readiness changes, and drives Service,
   EndpointSlice, and (optionally) Endpoints objects to match current
   control-plane node state, setting a controller `ownerReference` from each
-  EndpointSlice/Endpoints back to its Service so deleting the Service
-  garbage-collects the rest.
+  EndpointSlice/Endpoints back to its Service. An `ownerReference` is
+  Kubernetes's built-in parent/child link for garbage collection: when the
+  owner (the Service) is deleted, the API server automatically deletes
+  everything that points back to it, so deleting the Service is enough to
+  clean up the EndpointSlice/Endpoints objects too, with nothing left
+  behind.
 - `internal/endpoints/`: pure, unit-testable builder functions that turn
   `internal/config`'s service table into selector-less Service objects, and
   a set of control-plane nodes into matching `discovery.k8s.io/v1`
   EndpointSlice objects (and, optionally, legacy `v1` Endpoints). Nodes are
-  split by their InternalIP's address family, so a dual-stack cluster gets
-  a separate `<service>-metrics-ipv6` EndpointSlice alongside the IPv4 one,
-  since a single EndpointSlice's `AddressType` can't mix families.
+  split by their InternalIP's address family (IPv4 vs. IPv6), so a
+  dual-stack cluster (one where nodes have both an IPv4 and an IPv6
+  address) gets a separate `<service>-metrics-ipv6` EndpointSlice alongside
+  the IPv4 one, since a single EndpointSlice's `AddressType` can't mix
+  families.
 - `internal/config/`: the static table of watched services and their
   metrics ports (kube-scheduler, kube-proxy, kube-controller-manager).
   `--node-selector` only narrows kube-scheduler and kube-controller-manager
@@ -140,11 +148,43 @@ objects it manages are created in **`kube-system`**, not the controller's
 own namespace. That matches upstream kubeadm clusters, where kube-prometheus
 and kube-prometheus-stack's bundled ServiceMonitors already expect to find
 `kube-scheduler`, `kube-proxy`, and `kube-controller-manager` Services in
-`kube-system`. The controller creates and owns those selector-less Services
-itself, alongside the EndpointSlices (and, if enabled, Endpoints) it points
-at them, so existing kube-prometheus/kube-prometheus-stack ServiceMonitors
-pick up the targets with no relabeling changes and no separate manifest to
-apply for the Services.
+`kube-system`.
+
+The Service matters even though nothing ever sends traffic through it: a
+Prometheus Operator `ServiceMonitor` (a custom resource that tells
+Prometheus which Services to scrape, and how) selects a Service by its
+labels, not an EndpointSlice directly. Without a Service to select on, a
+`ServiceMonitor` has nothing to attach to, no matter how correct the
+EndpointSlice's target list is. So this controller creates a normal-looking
+Service for each of kube-scheduler, kube-controller-manager, and kube-proxy,
+except with no `spec.selector`, since nothing is pod-backed here, unlike
+a typical Service that fronts a Deployment's Pods. It then owns the
+EndpointSlice (and, if enabled, the legacy Endpoints object) that supplies
+that Service's actual targets, via the `ownerReference` link described
+above. The controller creates and owns all of this itself, so existing
+kube-prometheus/kube-prometheus-stack ServiceMonitors pick up the targets
+with no relabeling changes and no separate manifest to apply for the
+Services.
+
+```mermaid
+flowchart TB
+    Node["Node objects\n(control-plane readiness,\nlabels, IPs)"]
+    Controller["k3s-prometheus-metrics\ncontroller"]
+    Service["Service\n(kube-system, selector-less)"]
+    EndpointSlice["EndpointSlice\n(discovery.k8s.io/v1)"]
+    Endpoints["Endpoints (v1, optional\n--write-legacy-endpoints)"]
+    ServiceMonitor["ServiceMonitor\n(selects the Service)"]
+    Prometheus["Prometheus"]
+
+    Node -- watched by --> Controller
+    Controller -- creates & owns --> Service
+    Service -- ownerReference --> EndpointSlice
+    Service -- ownerReference --> Endpoints
+    ServiceMonitor -- selects --> Service
+    ServiceMonitor -- configures scrape jobs in --> Prometheus
+    EndpointSlice -- supplies target IP:ports to --> Prometheus
+    Prometheus -- scrapes metrics port on --> Node
+```
 
 ## Installation
 
@@ -193,7 +233,7 @@ directly.
 | `--write-legacy-endpoints` | `false` | Also create/update legacy `v1` Endpoints objects, for Kubernetes clusters older than 1.33. |
 | `--metrics-bind-address` | `:8080` | Address the controller's own Prometheus metrics endpoint binds to. |
 | `--health-probe-bind-address` | `:8081` | Address the controller's `/healthz` and `/readyz` probe endpoint binds to. |
-| `--leader-elect` | `false` | Enable leader election, so only one replica is active at a time. |
+| `--leader-elect` | `false` | Enable leader election: if you run more than one replica of the controller, they coordinate via a Kubernetes Lease object to agree on a single active replica, so only one of them reconciles at a time. |
 
 The controller also accepts the standard controller-runtime zap logging
 flags (`-zap-devel`, `-zap-encoder`, `-zap-log-level`, `-zap-stacktrace-level`,
@@ -288,8 +328,11 @@ default RBAC.
 
 ### RBAC
 
-RBAC is split across three role/binding pairs, each scoped to the least
-access it needs rather than one broad grant:
+Kubernetes RBAC (role-based access control) grants a `ServiceAccount`
+permissions by binding it to a `Role` (namespace-scoped) or `ClusterRole`
+(cluster-wide) via a `RoleBinding`/`ClusterRoleBinding`. This project's RBAC
+is split across three role/binding pairs, each scoped to the least access
+it needs rather than one broad grant:
 
 - `role.yaml` + `rolebinding.yaml`: a `ClusterRole`/`ClusterRoleBinding`
   granting only `get`, `list`, `watch` on `nodes`. Cluster-scoped because
