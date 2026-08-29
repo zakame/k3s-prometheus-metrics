@@ -2,6 +2,9 @@
 
 Thanks for your interest in improving k3s-prometheus-metrics.
 
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the package layout
+and how the test suites are organized before making changes.
+
 ## Commit messages: Scoped Commits
 
 This repository follows the [Scoped Commits](https://scopedcommits.com/)
