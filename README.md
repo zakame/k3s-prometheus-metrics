@@ -85,60 +85,10 @@ controller does not fall back to them.
 
 ## Architecture
 
-The controller is built on [controller-runtime](https://github.com/kubernetes-sigs/controller-runtime)
-and organized as:
-
-- `cmd/k3s-prometheus-metrics/`: entrypoint, manager wiring, leader
-  election, and CLI flags
-- `internal/controller/`: the Node watcher/reconciler. Reacts to Node
-  add/update/delete events and readiness changes, and drives Service,
-  EndpointSlice, and (optionally) Endpoints objects to match current
-  control-plane node state, setting a controller `ownerReference` from each
-  EndpointSlice/Endpoints back to its Service. An `ownerReference` is
-  Kubernetes's built-in parent/child link for garbage collection: when the
-  owner (the Service) is deleted, the API server automatically deletes
-  everything that points back to it, so deleting the Service is enough to
-  clean up the EndpointSlice/Endpoints objects too, with nothing left
-  behind.
-- `internal/endpoints/`: pure, unit-testable builder functions that turn
-  `internal/config`'s service table into selector-less Service objects, and
-  a set of control-plane nodes into matching `discovery.k8s.io/v1`
-  EndpointSlice objects (and, optionally, legacy `v1` Endpoints). Nodes are
-  split by their InternalIP's address family (IPv4 vs. IPv6), so a
-  dual-stack cluster (one where nodes have both an IPv4 and an IPv6
-  address) gets a separate `<service>-metrics-ipv6` EndpointSlice alongside
-  the IPv4 one, since a single EndpointSlice's `AddressType` can't mix
-  families.
-- `internal/config/`: the static table of watched services and their
-  metrics ports (kube-scheduler, kube-proxy, kube-controller-manager).
-  `--node-selector` only narrows kube-scheduler and kube-controller-manager
-  to control-plane nodes; kube-proxy's `NodeSelector` is hardcoded empty in
-  this table (not flag-configurable) since kube-proxy runs on every node,
-  not just control-plane ones
-- `deploy/standard/`: sample manifests (namespace, RBAC, ServiceAccount,
-  Deployment, ServiceMonitor, kustomization) for deploying the controller
-  alongside a kube-prometheus/kube-prometheus-stack install
-- `deploy/e2e/`, `deploy/e2e-legacy/`: kustomize overlays of
-  `deploy/standard/` used by CI's e2e suite against a k3d cluster;
-  `deploy/e2e-legacy/` additionally sets `--write-legacy-endpoints`, for the
-  legacy `v1` Endpoints leg. Not intended for end users.
-- `test/integration/`: envtest-backed tests that exercise the reconciler
-  and RBAC manifests against a real (if ephemeral) `kube-apiserver`,
-  complementing the unit tests under `internal/`. Run with `make
-  test-integration`.
-- `test/e2e/`: build-tag-`e2e` smoke tests that exercise the running
-  controller Deployment (not envtest, not direct `Reconcile()` calls) on a
-  real cluster, polling for the Service/EndpointSlice (and, with
-  `E2E_LEGACY_ENDPOINTS=true`, legacy Endpoints) objects it converges to.
-  Requires a cluster with `deploy/e2e` (or `deploy/e2e-legacy`) already
-  applied and a kubeconfig pointed at it; run with `go test -tags e2e
-  ./test/e2e/...`. CI runs this against a k3d cluster, since k3d runs real
-  k3s and labels control-plane nodes the way this controller expects
-  (kind/kubeadm clusters label them differently and would match zero nodes
-  against the default `--node-selector`), as a two-leg matrix: one against a
-  current k3s version applying `deploy/e2e` (default EndpointSlice-only
-  path), one against a pre-1.33 k3s version applying `deploy/e2e-legacy`
-  with `E2E_LEGACY_ENDPOINTS=true` (legacy Endpoints path).
+The controller is built on [controller-runtime](https://github.com/kubernetes-sigs/controller-runtime).
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the package layout and
+test suite organization. The rest of this section covers what operators
+need to know about the objects the controller manages.
 
 ### Where the Service/EndpointSlice/Endpoints objects live
 
@@ -160,11 +110,13 @@ Service for each of kube-scheduler, kube-controller-manager, and kube-proxy,
 except with no `spec.selector`, since nothing is pod-backed here, unlike
 a typical Service that fronts a Deployment's Pods. It then owns the
 EndpointSlice (and, if enabled, the legacy Endpoints object) that supplies
-that Service's actual targets, via the `ownerReference` link described
-above. The controller creates and owns all of this itself, so existing
-kube-prometheus/kube-prometheus-stack ServiceMonitors pick up the targets
-with no relabeling changes and no separate manifest to apply for the
-Services.
+that Service's actual targets, via a controller `ownerReference`:
+Kubernetes's built-in parent/child link for garbage collection, so
+deleting the Service is enough to delete the EndpointSlice/Endpoints too,
+with nothing left behind. The controller creates and owns all of this
+itself, so existing kube-prometheus/kube-prometheus-stack ServiceMonitors
+pick up the targets with no relabeling changes and no separate manifest to
+apply for the Services.
 
 ```mermaid
 flowchart TB
