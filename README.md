@@ -298,11 +298,13 @@ access it needs rather than one broad grant:
   `+kubebuilder:rbac` markers via `make manifests`.
 - `role-endpoints.yaml` + `rolebinding-endpoints.yaml`: a namespaced
   `Role`/`RoleBinding` **in `kube-system`** (matching the `--namespace`
-  default) granting `get`, `list`, `watch`, `create`, `update`, `patch` on
+  default) granting `get`, `list`, `watch`, `create`, `update` on
   `discovery.k8s.io` `endpointslices` and core `endpoints`/`services` (the
   latter for the selector-less Services the controller now creates and
-  owns itself). If you change `--namespace`, this Role and RoleBinding must
-  move to that namespace too. Hand-maintained rather than generated, since
+  owns itself). No `patch` verb: the controller only ever does
+  read-then-create-or-update, never a partial patch. If you change
+  `--namespace`, this Role and RoleBinding must move to that namespace too.
+  Hand-maintained rather than generated, since
   controller-gen only produces one ClusterRole from all markers and can't
   express "cluster-wide read, namespace-scoped write" as separate
   namespaced roles.
