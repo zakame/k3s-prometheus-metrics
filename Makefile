@@ -15,10 +15,12 @@ KO_VERSION          := v0.19.1
 DEV_PLATFORMS       := linux/amd64,linux/arm64
 DEV_PLACEHOLDER     := CHANGE-ME/k3s-prometheus-metrics
 DEV_LOCAL_KUSTOMIZATION := deploy/dev-local/kustomization.yaml
+MARKDOWNLINT_CLI2_VERSION := 0.23.2
+MERMAID_CLI_VERSION := 11.16.0
 
 .DEFAULT_GOAL := help
 
-.PHONY: help build test test-integration test-e2e cover lint vet fmt manifests docker-build run clean dev-image
+.PHONY: help build test test-integration test-e2e cover lint vet fmt manifests docker-build run clean dev-image docs-lint
 
 help: ## Show this help message
 	@echo "Usage: make <target>"
@@ -58,6 +60,25 @@ vet: ## Run go vet
 
 fmt: ## Check formatting (exits non-zero if files need formatting)
 	@test -z "$$(gofmt -l .)" || (gofmt -l . && exit 1)
+
+docs-lint: ## Check docs formatting, spelling, and Mermaid diagram syntax
+	go run github.com/golangci/misspell/cmd/misspell -error $$(git ls-files '*.md')
+	@# markdownlint-cli2 has no inline flags to disable rules, so this
+	@# writes a throwaway config instead of committing a dotfile.
+	@# mermaid-cli extracts and renders every ```mermaid fence in a
+	@# Markdown file itself when given one as -i; --no-sandbox works
+	@# around Chromium's sandbox needing a privilege CI runners don't
+	@# grant.
+	@set -e; \
+	tmp=$$(mktemp -d); \
+	trap 'rm -rf "$$tmp"' EXIT; \
+	printf '{"default": true, "MD013": false, "MD041": false, "MD060": false}' > "$$tmp/markdownlint.jsonc"; \
+	echo '{"args": ["--no-sandbox"]}' > "$$tmp/puppeteer.json"; \
+	npx -y markdownlint-cli2@$(MARKDOWNLINT_CLI2_VERSION) --config "$$tmp/markdownlint.jsonc" "**/*.md"; \
+	for md in $$(git ls-files '*.md'); do \
+		echo "Checking Mermaid diagrams in $$md"; \
+		npx -y @mermaid-js/mermaid-cli@$(MERMAID_CLI_VERSION) -p "$$tmp/puppeteer.json" -i "$$md" -o "$$tmp/out.md"; \
+	done
 
 manifests: ## Generate deploy/standard/role.yaml from +kubebuilder:rbac markers
 	go run sigs.k8s.io/controller-tools/cmd/controller-gen \
