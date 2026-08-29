@@ -61,6 +61,10 @@ Run the same checks CI runs on every pull request, and make sure they pass:
   `go run sigs.k8s.io/kustomize/kustomize/v5 build deploy/standard | go run github.com/yannh/kubeconform/cmd/kubeconform -summary -ignore-missing-schemas`
   (and the same for `deploy/dev`, `deploy/e2e`, and `deploy/e2e-legacy`) if
   you touched anything under `deploy/`.
+- `make docs-lint` (formatting, spelling, and Mermaid diagram syntax) if you
+  touched any Markdown file; needs Node.js for `npx` to run
+  markdownlint-cli2 and mermaid-cli. PRs that only touch Markdown files
+  skip the checks above and run this instead.
 
 Also:
 
