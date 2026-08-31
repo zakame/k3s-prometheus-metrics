@@ -64,13 +64,36 @@ Run the same checks CI runs on every pull request, and make sure they pass:
 - `make docs-lint` (formatting, spelling, and Mermaid diagram syntax) if you
   touched any Markdown file; needs Node.js for `npx` to run
   markdownlint-cli2 and mermaid-cli. PRs that only touch Markdown files
-  skip the checks above and run this instead.
+  skip the checks above and run this instead. CI runs this on Node.js
+  24.20.0 (see `.github/workflows/docs.yaml`); use the same version
+  locally if you hit lint results that don't match CI.
 
 Also:
 
 - Keep commits scoped as above; do not squash unrelated changes together.
 - Update relevant documentation (`README.md`, manifests under `deploy/`,
   etc.) in the same pull request as the code change it describes.
+
+## Releasing
+
+Pushing a tag triggers `.github/workflows/release.yaml`, which runs
+[GoReleaser](https://goreleaser.com/) (`goreleaser release --clean`) per
+`.goreleaser.yaml`. GoReleaser builds the binaries, publishes the container
+image via [`ko`](https://ko.build/), and generates the GitHub release notes.
+
+The changelog is grouped and filtered from `git log` using the
+`.goreleaser.yaml` `changelog` config, matched against commit **scopes**
+(the Scoped Commits convention above), not commit type keywords:
+
+- Commits scoped under `deploy/` go in a "Deployment" group; everything
+  else goes in "Changes".
+- Commits scoped under `test/`, `.github/`, `.goreleaser`, `Dockerfile:`,
+  `Makefile:`, `README`, `CONTRIBUTING`, or `docs/` are excluded from the
+  changelog entirely.
+
+This is another reason to keep commits properly scoped: an unscoped or
+mis-scoped commit subject doesn't just make `git log` harder to read, it
+also changes which changelog group (or exclusion) that commit lands in.
 
 ## Code of conduct
 
