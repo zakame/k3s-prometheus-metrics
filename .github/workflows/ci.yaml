@@ -55,7 +55,7 @@ jobs:
     - run: >-
         echo "KUBEBUILDER_ASSETS=$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest use 1.36.2 -p path)"
         >> "$GITHUB_ENV"
-    - run: go test -tags integration -v -timeout 20m ./test/integration/...
+    - run: go test -tags integration -v -timeout 20m ./test/integration/... ./cmd/...
 
   manifests:
     runs-on: ubuntu-latest
