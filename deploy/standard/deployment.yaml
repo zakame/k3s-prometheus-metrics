@@ -29,8 +29,8 @@ spec:
       containers:
       - name: controller
         # goreleaser/ko only ever publish "master" (snapshot builds) and
-        # version tags (e.g. "v0.1.0") on release -- there is no ":latest"
-        # tag. Pin to a released version in production.
+        # version tags (e.g. "0.1.0", no "v" prefix) on release -- there is
+        # no ":latest" tag. Pin to a released version in production.
         image: ghcr.io/zakame/k3s-prometheus-metrics:master
         args:
         - --leader-elect
