@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -30,12 +29,10 @@ func TestReconcile_APIWriteCount_ScalesWithServicesNotNodes(t *testing.T) {
 		t.Helper()
 
 		objs := make([]client.Object, 0, nodeCount)
-		for i := 0; i < nodeCount; i++ {
+		for i := range nodeCount {
 			objs = append(objs, &corev1.Node{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:   fmt.Sprintf("n%d", i),
-					Labels: map[string]string{"role": "control-plane"},
-				},
+				Name:   fmt.Sprintf("n%d", i),
+				Labels: map[string]string{"role": "control-plane"},
 				Status: corev1.NodeStatus{
 					Addresses:  []corev1.NodeAddress{{Type: corev1.NodeInternalIP, Address: fmt.Sprintf("10.%d.%d.%d", i/65536, (i/256)%256, i%256)}},
 					Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}},
