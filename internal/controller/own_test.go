@@ -7,7 +7,6 @@ import (
 	discoveryv1 "k8s.io/api/discovery/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/zakame/k3s-prometheus-metrics/internal/config"
@@ -27,7 +26,7 @@ func conflictingOwnerRef() metav1.OwnerReference {
 		Kind:       "ConfigMap",
 		Name:       "someone-else",
 		UID:        types.UID("other-uid"),
-		Controller: ptr.To(true),
+		Controller: new(true),
 	}
 }
 
@@ -35,16 +34,14 @@ func TestOwnEndpointSlices_ConflictingControllerOwner_ReturnsError(t *testing.T)
 	c := fake.NewClientBuilder().WithScheme(testScheme(t)).Build()
 	r := &NodeReconciler{Client: c, Config: config.Config{Namespace: "kube-system"}}
 
-	svc := corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "kube-scheduler", Namespace: "kube-system", UID: "svc-uid"}}
+	svc := corev1.Service{Name: "kube-scheduler", Namespace: "kube-system", UID: "svc-uid"}
 	svcs := map[string]corev1.Service{"kube-scheduler": svc}
 
 	slice := discoveryv1.EndpointSlice{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:            "kube-scheduler-metrics",
-			Namespace:       "kube-system",
-			Labels:          map[string]string{discoveryv1.LabelServiceName: "kube-scheduler"},
-			OwnerReferences: []metav1.OwnerReference{conflictingOwnerRef()},
-		},
+		Name:            "kube-scheduler-metrics",
+		Namespace:       "kube-system",
+		Labels:          map[string]string{discoveryv1.LabelServiceName: "kube-scheduler"},
+		OwnerReferences: []metav1.OwnerReference{conflictingOwnerRef()},
 	}
 
 	if err := r.ownEndpointSlices([]discoveryv1.EndpointSlice{slice}, svcs); err == nil {
@@ -57,11 +54,9 @@ func TestOwnEndpointSlices_NoMatchingService_LeavesUnowned(t *testing.T) {
 	r := &NodeReconciler{Client: c, Config: config.Config{Namespace: "kube-system"}}
 
 	slice := discoveryv1.EndpointSlice{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "orphan-metrics",
-			Namespace: "kube-system",
-			Labels:    map[string]string{discoveryv1.LabelServiceName: "no-such-service"},
-		},
+		Name:      "orphan-metrics",
+		Namespace: "kube-system",
+		Labels:    map[string]string{discoveryv1.LabelServiceName: "no-such-service"},
 	}
 
 	slices := []discoveryv1.EndpointSlice{slice}
@@ -77,16 +72,14 @@ func TestOwnEndpoints_ConflictingControllerOwner_ReturnsError(t *testing.T) { //
 	c := fake.NewClientBuilder().WithScheme(testScheme(t)).Build()
 	r := &NodeReconciler{Client: c, Config: config.Config{Namespace: "kube-system"}}
 
-	svc := corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "kube-scheduler", Namespace: "kube-system", UID: "svc-uid"}}
+	svc := corev1.Service{Name: "kube-scheduler", Namespace: "kube-system", UID: "svc-uid"}
 	svcs := map[string]corev1.Service{"kube-scheduler": svc}
 
 	eps := corev1.Endpoints{ //nolint:staticcheck
-		ObjectMeta: metav1.ObjectMeta{
-			Name:            "kube-scheduler",
-			Namespace:       "kube-system",
-			Labels:          map[string]string{discoveryv1.LabelServiceName: "kube-scheduler"},
-			OwnerReferences: []metav1.OwnerReference{conflictingOwnerRef()},
-		},
+		Name:            "kube-scheduler",
+		Namespace:       "kube-system",
+		Labels:          map[string]string{discoveryv1.LabelServiceName: "kube-scheduler"},
+		OwnerReferences: []metav1.OwnerReference{conflictingOwnerRef()},
 	}
 
 	if err := r.ownEndpoints([]corev1.Endpoints{eps}, svcs); err == nil { //nolint:staticcheck
@@ -99,11 +92,9 @@ func TestOwnEndpoints_NoMatchingService_LeavesUnowned(t *testing.T) { //nolint:s
 	r := &NodeReconciler{Client: c, Config: config.Config{Namespace: "kube-system"}}
 
 	eps := corev1.Endpoints{ //nolint:staticcheck
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "orphan",
-			Namespace: "kube-system",
-			Labels:    map[string]string{discoveryv1.LabelServiceName: "no-such-service"},
-		},
+		Name:      "orphan",
+		Namespace: "kube-system",
+		Labels:    map[string]string{discoveryv1.LabelServiceName: "no-such-service"},
 	}
 
 	epsList := []corev1.Endpoints{eps} //nolint:staticcheck

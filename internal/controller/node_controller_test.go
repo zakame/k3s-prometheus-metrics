@@ -16,7 +16,8 @@ import (
 
 func baseNode(name string) *corev1.Node {
 	return &corev1.Node{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Labels: map[string]string{"a": "1"}},
+		Name:   name,
+		Labels: map[string]string{"a": "1"},
 		Status: corev1.NodeStatus{
 			Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}},
 		},

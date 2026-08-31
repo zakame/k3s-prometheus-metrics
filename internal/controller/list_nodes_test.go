@@ -6,7 +6,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -28,7 +27,7 @@ func testScheme(t *testing.T) *runtime.Scheme {
 }
 
 func labeledNode(name string, labels map[string]string) *corev1.Node {
-	return &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: name, Labels: labels}}
+	return &corev1.Node{Name: name, Labels: labels}
 }
 
 func TestListNodesByService_DedupesBySelector_OneListCallPerDistinctSelector(t *testing.T) {
