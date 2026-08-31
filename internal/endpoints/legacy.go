@@ -3,7 +3,6 @@ package endpoints
 import (
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/zakame/k3s-prometheus-metrics/internal/config"
 )
@@ -21,17 +20,15 @@ func BuildEndpoints(nodesByService map[string][]corev1.Node, cfg config.Config) 
 		}
 
 		all = append(all, corev1.Endpoints{ //nolint:staticcheck
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      svc.Name,
-				Namespace: cfg.Namespace,
-				Labels: map[string]string{
-					discoveryv1.LabelServiceName:   svc.Name,
-					"app.kubernetes.io/managed-by": ManagedByValue,
-					// Without this, kube-controller-manager's
-					// EndpointSliceMirroring controller duplicates this
-					// into a second, conflicting EndpointSlice.
-					discoveryv1.LabelSkipMirror: "true",
-				},
+			Name:      svc.Name,
+			Namespace: cfg.Namespace,
+			Labels: map[string]string{
+				discoveryv1.LabelServiceName:   svc.Name,
+				"app.kubernetes.io/managed-by": ManagedByValue,
+				// Without this, kube-controller-manager's
+				// EndpointSliceMirroring controller duplicates this
+				// into a second, conflicting EndpointSlice.
+				discoveryv1.LabelSkipMirror: "true",
 			},
 			Subsets: []corev1.EndpointSubset{{ //nolint:staticcheck
 				Addresses:         ready,
