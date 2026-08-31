@@ -115,15 +115,22 @@ func deleteNode(t *testing.T, ctx context.Context, name string) {
 // API server -- only the watch-triggering plumbing is bypassed.
 func reconcile(t *testing.T, ctx context.Context, cfg config.Config) {
 	t.Helper()
-	r := &controller.NodeReconciler{Client: k8sClient, Config: cfg}
-	if _, err := r.Reconcile(ctx, ctrl.Request{}); err != nil {
-		t.Fatalf("Reconcile: %v", err)
-	}
+	reconcileWithClients(t, ctx, cfg, k8sClient, nil)
 }
 
 func reconcileWithLegacyClient(t *testing.T, ctx context.Context, cfg config.Config, legacy client.Client) {
 	t.Helper()
-	r := &controller.NodeReconciler{Client: k8sClient, Config: cfg, LegacyClient: legacy}
+	reconcileWithClients(t, ctx, cfg, k8sClient, legacy)
+}
+
+// reconcileWithClients is reconcile/reconcileWithLegacyClient's common,
+// most general form -- letting a test substitute the primary Client too
+// (e.g. to spy on its writes with interceptor.NewClient), which the other
+// two intentionally don't expose since they always drive the shared
+// package-level k8sClient.
+func reconcileWithClients(t *testing.T, ctx context.Context, cfg config.Config, primary, legacy client.Client) {
+	t.Helper()
+	r := &controller.NodeReconciler{Client: primary, Config: cfg, LegacyClient: legacy}
 	if _, err := r.Reconcile(ctx, ctrl.Request{}); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
