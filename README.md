@@ -6,8 +6,9 @@ This is a Kubernetes controller that watches Node objects on a
 objects (a list of IP:port targets behind a Service, and the modern
 replacement for the older `v1` Endpoints API; optionally this controller
 also writes legacy `v1` Endpoints, for Kubernetes older than 1.33) pointing
-at the kube-scheduler, kube-proxy, and kube-controller-manager metrics
-ports on each control-plane node. That lets an in-cluster Prometheus (via
+at the kube-scheduler and kube-controller-manager metrics ports on each
+control-plane node, and the kube-proxy metrics port on every node. That
+lets an in-cluster Prometheus (via
 [kube-prometheus] jsonnet or the [kube-prometheus-stack] Helm chart) scrape
 control-plane metrics the same way it would on a normal upstream Kubernetes
 cluster.
@@ -295,7 +296,9 @@ kubectl get endpointslices -n kube-system -l endpointslice.kubernetes.io/managed
 
 should list one EndpointSlice per service (`kube-scheduler-metrics`,
 `kube-controller-manager-metrics`, `kube-proxy-metrics`), each with one
-endpoint address per matching control-plane node. From there, check
+endpoint address per matching node (control-plane nodes only for
+kube-scheduler/kube-controller-manager; every node for kube-proxy). From
+there, check
 Prometheus's own **Status → Targets** page for the `kube-scheduler`,
 `kube-controller-manager`, and `kube-proxy` jobs to confirm scrapes are
 succeeding. A `context deadline exceeded` or `403`-style scrape error there
