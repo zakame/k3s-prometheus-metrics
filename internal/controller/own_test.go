@@ -93,3 +93,24 @@ func TestOwnEndpoints_ConflictingControllerOwner_ReturnsError(t *testing.T) { //
 		t.Fatal("expected an error when the Endpoints object already has a conflicting controller owner reference")
 	}
 }
+
+func TestOwnEndpoints_NoMatchingService_LeavesUnowned(t *testing.T) { //nolint:staticcheck // SA1019: intentional legacy support for Kubernetes <1.33
+	c := fake.NewClientBuilder().WithScheme(testScheme(t)).Build()
+	r := &NodeReconciler{Client: c, Config: config.Config{Namespace: "kube-system"}}
+
+	eps := corev1.Endpoints{ //nolint:staticcheck
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "orphan",
+			Namespace: "kube-system",
+			Labels:    map[string]string{discoveryv1.LabelServiceName: "no-such-service"},
+		},
+	}
+
+	epsList := []corev1.Endpoints{eps} //nolint:staticcheck
+	if err := r.ownEndpoints(epsList, map[string]corev1.Service{}); err != nil {
+		t.Fatalf("ownEndpoints: %v", err)
+	}
+	if len(epsList[0].OwnerReferences) != 0 {
+		t.Fatalf("expected no owner reference set when no Service matches, got %+v", epsList[0].OwnerReferences)
+	}
+}
