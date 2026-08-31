@@ -301,6 +301,32 @@ func TestBuildEndpoints_Idempotent(t *testing.T) {
 	}
 }
 
+// Unlike BuildEndpointSlices, BuildEndpoints doesn't split by address
+// family -- both families land in the same subset.
+func TestBuildEndpoints_MixedIPv4AndIPv6Nodes_MixedIntoOneSubset(t *testing.T) {
+	cfg := testConfig()
+	nodes := []corev1.Node{
+		node("v4", "10.0.0.1", withReadyCondition(corev1.ConditionTrue)),
+		node("v6", "2001:db8::1", withReadyCondition(corev1.ConditionTrue)),
+	}
+	got := endpoints.BuildEndpoints(nodesFor(cfg, nodes), cfg) //nolint:staticcheck
+	if len(got) != 1 {
+		t.Fatalf("expected exactly 1 Endpoints object (v1 Endpoints doesn't split by address family), got %d", len(got))
+	}
+	subset := got[0].Subsets[0]
+	if len(subset.Addresses) != 2 {
+		t.Fatalf("expected both the IPv4 and IPv6 node in the same subset's Addresses, got %d: %+v", len(subset.Addresses), subset.Addresses)
+	}
+	v4 := addrByIP(t, subset.Addresses, "10.0.0.1")
+	if v4.NodeName == nil || *v4.NodeName != "v4" {
+		t.Errorf("expected 10.0.0.1 to belong to node v4, got %v", v4.NodeName)
+	}
+	v6 := addrByIP(t, subset.Addresses, "2001:db8::1")
+	if v6.NodeName == nil || *v6.NodeName != "v6" {
+		t.Errorf("expected 2001:db8::1 to belong to node v6, got %v", v6.NodeName)
+	}
+}
+
 // TestReadyClassification_ConsistentBetweenSliceAndLegacy guards against the
 // two builders' readiness logic drifting apart: a node considered Ready in
 // the EndpointSlice output must be the same set of nodes landing in
