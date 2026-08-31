@@ -11,6 +11,10 @@ import (
 // legacy v1 Endpoints object per service, for Kubernetes clusters older
 // than 1.33. Not-ready nodes go in NotReadyAddresses, which most legacy
 // consumers don't scrape by default.
+//
+// Unlike BuildEndpointSlices, this doesn't split by IP family: no
+// Kubernetes 1.21+ consumer (kube-proxy, CoreDNS) reads v1 Endpoints for
+// dataplane/DNS decisions -- EndpointSlice is authoritative.
 func BuildEndpoints(nodesByService map[string][]corev1.Node, cfg config.Config) []corev1.Endpoints { //nolint:staticcheck // SA1019: intentional legacy support for Kubernetes <1.33
 	var all []corev1.Endpoints //nolint:staticcheck
 	for _, svc := range cfg.Services {
