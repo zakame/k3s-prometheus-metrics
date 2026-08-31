@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -81,5 +82,65 @@ func TestReconcile_APIWriteCount_ScalesWithServicesNotNodes(t *testing.T) {
 	wantWrites := len(config.DefaultServices) * 2
 	if small != wantWrites {
 		t.Fatalf("expected %d writes (1 Service + 1 EndpointSlice create per service), got %d", wantWrites, small)
+	}
+}
+
+// Nothing validates Service.Name is unique; downstream name-keyed maps
+// collapse duplicates to whichever entry was processed last.
+func TestReconcile_DuplicateServiceNames_LastOneWinsSilently(t *testing.T) {
+	cfg := config.Config{
+		Namespace: "kube-system",
+		Services: []config.Service{
+			{Name: "dup", PortName: "first-metrics", Port: 1111, Protocol: corev1.ProtocolTCP, AppProtocol: "http"},
+			{Name: "dup", PortName: "second-metrics", Port: 2222, Protocol: corev1.ProtocolUDP, AppProtocol: "https"},
+		},
+		WriteLegacyEndpoints: true,
+	}
+
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: "n1"},
+		Status: corev1.NodeStatus{
+			Addresses:  []corev1.NodeAddress{{Type: corev1.NodeInternalIP, Address: "10.0.0.1"}},
+			Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}},
+		},
+	}
+
+	c := fake.NewClientBuilder().WithScheme(testScheme(t)).WithObjects(node).Build()
+	r := &NodeReconciler{Client: c, Config: cfg}
+	if _, err := r.Reconcile(context.Background(), ctrl.Request{}); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	var svcList corev1.ServiceList
+	if err := c.List(context.Background(), &svcList); err != nil {
+		t.Fatalf("listing Services: %v", err)
+	}
+	if len(svcList.Items) != 1 {
+		t.Fatalf("expected exactly 1 Service object for 2 same-named config entries, got %d: %+v", len(svcList.Items), svcList.Items)
+	}
+	if got := svcList.Items[0].Spec.Ports[0].Port; got != 2222 {
+		t.Fatalf("expected the last-defined entry (port 2222) to win, got port %d", got)
+	}
+
+	var epsList corev1.EndpointsList //nolint:staticcheck // SA1019: intentional legacy support for Kubernetes <1.33
+	if err := c.List(context.Background(), &epsList); err != nil {
+		t.Fatalf("listing Endpoints: %v", err)
+	}
+	if len(epsList.Items) != 1 {
+		t.Fatalf("expected exactly 1 legacy Endpoints object for 2 same-named config entries, got %d: %+v", len(epsList.Items), epsList.Items)
+	}
+	if got := epsList.Items[0].Subsets[0].Ports[0].Port; got != 2222 {
+		t.Fatalf("expected the last-defined entry (port 2222) to win, got port %d", got)
+	}
+
+	var sliceList discoveryv1.EndpointSliceList
+	if err := c.List(context.Background(), &sliceList); err != nil {
+		t.Fatalf("listing EndpointSlices: %v", err)
+	}
+	if len(sliceList.Items) != 1 {
+		t.Fatalf("expected exactly 1 EndpointSlice object for 2 same-named config entries, got %d: %+v", len(sliceList.Items), sliceList.Items)
+	}
+	if got := *sliceList.Items[0].Ports[0].Port; got != 2222 {
+		t.Fatalf("expected the last-defined entry (port 2222) to win, got port %d", got)
 	}
 }
