@@ -2,7 +2,6 @@ package endpoints
 
 import (
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/zakame/k3s-prometheus-metrics/internal/config"
 )
@@ -14,14 +13,12 @@ func BuildServices(cfg config.Config) []corev1.Service {
 	for _, svc := range cfg.Services {
 		appProtocol := svc.AppProtocol
 		svcs = append(svcs, corev1.Service{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      svc.Name,
-				Namespace: cfg.Namespace,
-				Labels: map[string]string{
-					"app.kubernetes.io/name":       svc.Name,
-					"k8s-app":                      svc.Name,
-					"app.kubernetes.io/managed-by": ManagedByValue,
-				},
+			Name:      svc.Name,
+			Namespace: cfg.Namespace,
+			Labels: map[string]string{
+				"app.kubernetes.io/name":       svc.Name,
+				"k8s-app":                      svc.Name,
+				"app.kubernetes.io/managed-by": ManagedByValue,
 			},
 			Spec: corev1.ServiceSpec{
 				ClusterIP: corev1.ClusterIPNone,

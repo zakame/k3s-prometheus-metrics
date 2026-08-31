@@ -5,11 +5,10 @@ package endpoints
 
 import (
 	"net"
-	"sort"
+	slices0 "slices"
 
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/zakame/k3s-prometheus-metrics/internal/config"
 )
@@ -39,7 +38,7 @@ func BuildEndpointSlices(nodesByService map[string][]corev1.Node, cfg config.Con
 		for family := range byFamily {
 			families = append(families, family)
 		}
-		sort.Slice(families, func(i, j int) bool { return families[i] < families[j] })
+		slices0.Sort(families)
 
 		port := svc.Port
 		protocol := svc.Protocol
@@ -53,13 +52,11 @@ func BuildEndpointSlices(nodesByService map[string][]corev1.Node, cfg config.Con
 			}
 
 			slices = append(slices, discoveryv1.EndpointSlice{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      name,
-					Namespace: cfg.Namespace,
-					Labels: map[string]string{
-						discoveryv1.LabelServiceName: svc.Name,
-						discoveryv1.LabelManagedBy:   ManagedByValue,
-					},
+				Name:      name,
+				Namespace: cfg.Namespace,
+				Labels: map[string]string{
+					discoveryv1.LabelServiceName: svc.Name,
+					discoveryv1.LabelManagedBy:   ManagedByValue,
 				},
 				AddressType: family,
 				Endpoints:   byFamily[family],

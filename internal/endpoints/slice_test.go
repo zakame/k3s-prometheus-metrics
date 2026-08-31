@@ -6,7 +6,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/zakame/k3s-prometheus-metrics/internal/config"
 	"github.com/zakame/k3s-prometheus-metrics/internal/endpoints"
@@ -36,7 +35,7 @@ func nodesFor(cfg config.Config, nodes []corev1.Node) map[string][]corev1.Node {
 type nodeOpt func(*corev1.Node)
 
 func node(name, internalIP string, opts ...nodeOpt) corev1.Node {
-	n := corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: name}}
+	n := corev1.Node{Name: name}
 	if internalIP != "" {
 		n.Status.Addresses = append(n.Status.Addresses,
 			corev1.NodeAddress{Type: corev1.NodeInternalIP, Address: internalIP})
@@ -114,7 +113,7 @@ func TestBuildEndpointSlices_NodeWithoutInternalIP_Skipped(t *testing.T) {
 }
 
 func TestBuildEndpointSlices_NodeWithOnlyExternalIP_Skipped(t *testing.T) {
-	n := corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "external-only"}}
+	n := corev1.Node{Name: "external-only"}
 	withExternalIP("203.0.113.1")(&n)
 	withReadyCondition(corev1.ConditionTrue)(&n)
 
