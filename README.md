@@ -157,6 +157,10 @@ directly.
 | `--health-probe-bind-address` | `:8081` | Address the controller's `/healthz` and `/readyz` probe endpoint binds to. |
 | `--leader-elect` | `false` | Enable leader election: if you run more than one replica of the controller, they coordinate via a Kubernetes Lease object to agree on a single active replica, so only one of them reconciles at a time. |
 
+The monitored cluster must be running Kubernetes 1.21 or later, since that
+is when `discovery.k8s.io/v1` EndpointSlice (which this controller always
+writes, regardless of `--write-legacy-endpoints`) graduated to GA.
+
 The controller also accepts the standard controller-runtime zap logging
 flags (`-zap-devel`, `-zap-encoder`, `-zap-log-level`, `-zap-stacktrace-level`,
 `-zap-time-encoding`).
