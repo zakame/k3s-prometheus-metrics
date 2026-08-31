@@ -148,7 +148,7 @@ func parseSelector(s string) (map[string]string, error) {
 		return nil, nil
 	}
 	sel := map[string]string{}
-	for _, pair := range strings.Split(s, ",") {
+	for pair := range strings.SplitSeq(s, ",") {
 		k, v, ok := strings.Cut(pair, "=")
 		if !ok {
 			return nil, fmt.Errorf("invalid selector segment %q: expected key=value", pair)
