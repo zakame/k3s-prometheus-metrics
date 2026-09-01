@@ -50,7 +50,7 @@ type NodeReconciler struct {
 func (r *NodeReconciler) Reconcile(ctx context.Context, _ ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
-	nodesByService, err := r.listNodesByService(ctx)
+	nodesByService, err := ListNodesByService(ctx, r.Client, r.Config)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -88,22 +88,24 @@ func (r *NodeReconciler) Reconcile(ctx context.Context, _ ctrl.Request) (ctrl.Re
 	return ctrl.Result{}, nil
 }
 
-// listNodesByService lists nodes once per distinct node selector, then
-// returns each service's matching nodes by name.
-func (r *NodeReconciler) listNodesByService(ctx context.Context) (map[string][]corev1.Node, error) {
-	byService := make(map[string][]corev1.Node, len(r.Config.Services))
+// ListNodesByService lists nodes once per distinct node selector, then
+// returns each service's matching nodes by name. Exported so the
+// "manifests" one-shot subcommand can reuse the exact same
+// selector-matching logic as the live reconciler.
+func ListNodesByService(ctx context.Context, c client.Client, cfg config.Config) (map[string][]corev1.Node, error) {
+	byService := make(map[string][]corev1.Node, len(cfg.Services))
 	bySelector := map[string][]corev1.Node{}
-	for _, svc := range r.Config.Services {
+	for _, svc := range cfg.Services {
 		sel := svc.NodeSelector
 		if sel == nil {
-			sel = r.Config.NodeSelector
+			sel = cfg.NodeSelector
 		}
 
 		key := labels.Set(sel).String()
 		nodes, ok := bySelector[key]
 		if !ok {
 			var nodeList corev1.NodeList
-			if err := r.List(ctx, &nodeList, client.MatchingLabels(sel)); err != nil {
+			if err := c.List(ctx, &nodeList, client.MatchingLabels(sel)); err != nil {
 				return nil, fmt.Errorf("listing nodes for %s: %w", svc.Name, err)
 			}
 			nodes = nodeList.Items
