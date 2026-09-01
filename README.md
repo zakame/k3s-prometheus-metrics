@@ -165,6 +165,43 @@ The controller also accepts the standard controller-runtime zap logging
 flags (`-zap-devel`, `-zap-encoder`, `-zap-log-level`, `-zap-stacktrace-level`,
 `-zap-time-encoding`).
 
+### One-shot manifest generation: `manifests` subcommand
+
+For clusters that rarely change (a single-node homelab, or an on-prem
+cluster without node autoscaling), running the controller continuously is
+more than you need. `k3s-prometheus-metrics manifests` lists Nodes once and
+prints the same Service/EndpointSlice (and, with `--write-legacy-endpoints`,
+Endpoints) objects the live controller would converge to, as YAML on
+stdout:
+
+```bash
+k3s-prometheus-metrics manifests --node-selector=node-role.kubernetes.io/control-plane=true > manifests.yaml
+kubectl apply -f manifests.yaml
+```
+
+It accepts `--namespace`, `--node-selector`, and `--write-legacy-endpoints`
+-- same meaning as the controller flags above. It only needs read access to
+Nodes (`get`, `list`); it never touches Services, EndpointSlices, or
+Endpoints itself.
+
+Since it doesn't set `ownerReferences` (there's no live Service to own them
+against yet), re-running and re-applying won't clean up a service whose
+node set has dropped to zero. Prune by label instead. Service and (legacy)
+Endpoints carry `app.kubernetes.io/managed-by`; EndpointSlice carries a
+different label, `endpointslice.kubernetes.io/managed-by`, so pruning both
+kinds takes two commands:
+
+```bash
+kubectl apply -f manifests.yaml --prune -l app.kubernetes.io/managed-by=k3s-prometheus-metrics \
+  --prune-allowlist=core/v1/Service
+kubectl apply -f manifests.yaml --prune -l endpointslice.kubernetes.io/managed-by=k3s-prometheus-metrics \
+  --prune-allowlist=discovery.k8s.io/v1/EndpointSlice
+```
+
+Add `--prune-allowlist=core/v1/Endpoints` to the first command if you
+generated with `--write-legacy-endpoints`. `kubectl`'s `--prune` is still
+alpha as of 1.36; read its `--help` warning before relying on it.
+
 ## Kubernetes Deployment
 
 Sample manifests are available in [`deploy/standard/`](deploy/standard/):
