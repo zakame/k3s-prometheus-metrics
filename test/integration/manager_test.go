@@ -10,7 +10,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	"k8s.io/client-go/rest"
-	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -52,7 +51,7 @@ func TestManager_ImpersonatedShippedRBAC_DrivesEndpointSliceViaWatch(t *testing.
 		// Controller names are validated process-wide, not per-manager;
 		// avoids collisions with other manager tests in this binary.
 		// Test-only, production wants the collision protection.
-		Controller: ctrlconfig.Controller{SkipNameValidation: ptr.To(true)},
+		Controller: ctrlconfig.Controller{SkipNameValidation: new(true)},
 		// Mirrors cmd/k3s-prometheus-metrics's production Cache scoping.
 		Cache: cache.Options{
 			ByObject: map[client.Object]cache.ByObject{

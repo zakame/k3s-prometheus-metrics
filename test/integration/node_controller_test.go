@@ -8,7 +8,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/zakame/k3s-prometheus-metrics/internal/config"
@@ -228,13 +227,11 @@ func TestReconcile_DoesNotAdoptForeignEndpointSlice(t *testing.T) {
 	createNode(t, ctx, "n1-"+id, "10.9.0.1", true, withExtraLabels(cpLabel))
 
 	foreign := &discoveryv1.EndpointSlice{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      id, // same base name our Service uses, no "-metrics" suffix
-			Namespace: testNamespace,
-			Labels: map[string]string{
-				discoveryv1.LabelServiceName: id,
-				discoveryv1.LabelManagedBy:   "endpointslice-controller.k8s.io",
-			},
+		Name:      id, // same base name our Service uses, no "-metrics" suffix
+		Namespace: testNamespace,
+		Labels: map[string]string{
+			discoveryv1.LabelServiceName: id,
+			discoveryv1.LabelManagedBy:   "endpointslice-controller.k8s.io",
 		},
 		AddressType: discoveryv1.AddressTypeIPv4,
 	}

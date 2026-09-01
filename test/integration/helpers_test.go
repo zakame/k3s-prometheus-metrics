@@ -4,6 +4,7 @@ package integration
 
 import (
 	"context"
+	"maps"
 	"regexp"
 	"strings"
 	"testing"
@@ -12,7 +13,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -49,9 +49,7 @@ func withExtraLabels(labels map[string]string) nodeOpt {
 		if n.Labels == nil {
 			n.Labels = map[string]string{}
 		}
-		for k, v := range labels {
-			n.Labels[k] = v
-		}
+		maps.Copy(n.Labels, labels)
 	}
 }
 
@@ -61,7 +59,7 @@ func withExtraLabels(labels map[string]string) nodeOpt {
 func createNode(t *testing.T, ctx context.Context, name, internalIP string, ready bool, opts ...nodeOpt) *corev1.Node {
 	t.Helper()
 
-	n := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: name}}
+	n := &corev1.Node{Name: name}
 	for _, o := range opts {
 		o(n)
 	}
@@ -80,7 +78,7 @@ func createNode(t *testing.T, ctx context.Context, name, internalIP string, read
 	}
 
 	t.Cleanup(func() {
-		_ = k8sClient.Delete(context.Background(), &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: name}})
+		_ = k8sClient.Delete(context.Background(), &corev1.Node{Name: name})
 	})
 	return n
 }
@@ -103,7 +101,7 @@ func setNodeReady(t *testing.T, ctx context.Context, name string, ready bool) {
 
 func deleteNode(t *testing.T, ctx context.Context, name string) {
 	t.Helper()
-	if err := k8sClient.Delete(ctx, &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: name}}); err != nil {
+	if err := k8sClient.Delete(ctx, &corev1.Node{Name: name}); err != nil {
 		t.Fatalf("deleting node %s: %v", name, err)
 	}
 }
@@ -144,7 +142,7 @@ func getEndpointSliceIn(t *testing.T, ctx context.Context, namespace, name strin
 	}
 	t.Cleanup(func() {
 		_ = k8sClient.Delete(context.Background(), &discoveryv1.EndpointSlice{
-			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
+			Name: name, Namespace: namespace,
 		})
 	})
 	return &es
@@ -172,7 +170,7 @@ func getServiceIn(t *testing.T, ctx context.Context, namespace, name string) *co
 	}
 	t.Cleanup(func() {
 		_ = k8sClient.Delete(context.Background(), &corev1.Service{
-			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
+			Name: name, Namespace: namespace,
 		})
 	})
 	return &svc
@@ -196,7 +194,7 @@ func getLegacyEndpointsIn(t *testing.T, ctx context.Context, namespace, name str
 	}
 	t.Cleanup(func() {
 		_ = k8sClient.Delete(context.Background(), &corev1.Endpoints{ //nolint:staticcheck
-			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
+			Name: name, Namespace: namespace,
 		})
 	})
 	return &eps
