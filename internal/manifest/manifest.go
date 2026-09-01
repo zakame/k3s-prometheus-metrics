@@ -16,7 +16,8 @@ import (
 
 // Render marshals svcs, slices, and (optionally empty) eps into one
 // multi-document YAML stream, ordered by kind then name, so re-running
-// against an unchanged cluster produces a byte-stable diff.
+// against an unchanged cluster produces a byte-stable diff. Sorts and
+// stamps TypeMeta on its inputs in place -- pass freshly built slices.
 func Render(svcs []corev1.Service, slices []discoveryv1.EndpointSlice, eps []corev1.Endpoints) ([]byte, error) { //nolint:staticcheck // SA1019: intentional legacy support for Kubernetes <1.33
 	sort.Slice(svcs, func(i, j int) bool { return svcs[i].Name < svcs[j].Name })
 	sort.Slice(slices, func(i, j int) bool { return slices[i].Name < slices[j].Name })
