@@ -2,7 +2,9 @@
 // creates/updates discovery.k8s.io/v1 EndpointSlice objects (and,
 // optionally, legacy v1 Endpoints) pointing at the kube-scheduler,
 // kube-proxy, and kube-controller-manager metrics ports on each
-// control-plane node, so an in-cluster Prometheus can scrape them.
+// control-plane node, so an in-cluster Prometheus can scrape them. Its
+// "manifests" subcommand does the same thing once, printing YAML instead
+// of running continuously.
 //
 // See https://github.com/k3s-io/k3s/issues/3619 for why this exists as a
 // standalone controller rather than a feature of k3s itself.
@@ -39,6 +41,14 @@ func init() {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "manifests" {
+		runManifests(os.Args[2:])
+		return
+	}
+	runController()
+}
+
+func runController() {
 	var (
 		namespace            string
 		nodeSelectorFlag     string
