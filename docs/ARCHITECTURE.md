@@ -10,7 +10,8 @@ The controller is built on
 and organized as:
 
 - `cmd/k3s-prometheus-metrics/`: entrypoint, manager wiring, leader
-  election, and CLI flags
+  election, and CLI flags. Its `manifests` subcommand is a one-shot
+  alternative entrypoint: no manager, just a plain client and stdout.
 - `internal/controller/`: the Node watcher/reconciler. Reacts to Node
   add/update/delete events and readiness changes, and drives Service,
   EndpointSlice, and (optionally) Endpoints objects to match current
@@ -20,7 +21,8 @@ and organized as:
   owner (the Service) is deleted, the API server automatically deletes
   everything that points back to it, so deleting the Service is enough to
   clean up the EndpointSlice/Endpoints objects too, with nothing left
-  behind.
+  behind. Its node-listing logic is exported as `ListNodesByService` so the
+  `manifests` subcommand can reuse it.
 - `internal/endpoints/`: pure, unit-testable builder functions that turn
   `internal/config`'s service table into selector-less Service objects, and
   a set of control-plane nodes into matching `discovery.k8s.io/v1`
@@ -30,6 +32,10 @@ and organized as:
   address) gets a separate `<service>-metrics-ipv6` EndpointSlice alongside
   the IPv4 one, since a single EndpointSlice's `AddressType` can't mix
   families.
+- `internal/manifest/`: pure functions that stamp `TypeMeta` and render
+  Service/EndpointSlice/Endpoints objects as multi-document YAML, for the
+  `manifests` subcommand. No API dependency, same pattern as
+  `internal/endpoints/`.
 - `internal/config/`: the static table of watched services and their
   metrics ports (kube-scheduler, kube-proxy, kube-controller-manager).
   `--node-selector` only narrows kube-scheduler and kube-controller-manager
