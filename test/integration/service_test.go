@@ -117,11 +117,9 @@ func TestReconcile_AdoptsPreExistingServiceByName_UnlikeEndpointSlice(t *testing
 	// controller never created (e.g. the old static manifest, or a
 	// kubeadm-flavored cluster's pre-existing Service).
 	pre := &corev1.Service{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      id,
-			Namespace: testNamespace,
-			Labels:    map[string]string{"app.kubernetes.io/name": id, "k8s-app": id},
-		},
+		Name:      id,
+		Namespace: testNamespace,
+		Labels:    map[string]string{"app.kubernetes.io/name": id, "k8s-app": id},
 		Spec: corev1.ServiceSpec{
 			ClusterIP: corev1.ClusterIPNone,
 			Ports:     []corev1.ServicePort{{Name: "metrics", Port: 9999, Protocol: corev1.ProtocolTCP}},
@@ -164,7 +162,7 @@ func TestReconcile_ReconcilesExistingHeadlessService(t *testing.T) {
 	createNode(t, ctx, "n1-"+id, "10.40.2.1", true, withExtraLabels(cpLabel))
 
 	pre := &corev1.Service{
-		ObjectMeta: metav1.ObjectMeta{Name: id, Namespace: testNamespace},
+		Name: id, Namespace: testNamespace,
 		Spec: corev1.ServiceSpec{
 			ClusterIP: corev1.ClusterIPNone,
 			Ports:     []corev1.ServicePort{{Name: "stale", Port: 1111, Protocol: corev1.ProtocolTCP}},
@@ -206,7 +204,7 @@ func TestReconcile_AdoptingForeignService_ClearsStaleSelector(t *testing.T) {
 	createNode(t, ctx, "n1-"+id, "10.40.3.1", true, withExtraLabels(cpLabel))
 
 	pre := &corev1.Service{
-		ObjectMeta: metav1.ObjectMeta{Name: id, Namespace: testNamespace},
+		Name: id, Namespace: testNamespace,
 		Spec: corev1.ServiceSpec{
 			ClusterIP: corev1.ClusterIPNone,
 			Selector:  map[string]string{"app": "something-unrelated"},
@@ -242,7 +240,7 @@ func TestReconcile_AdoptingNonHeadlessForeignService_ErrorsRatherThanSilentlyDri
 	createNode(t, ctx, "n1-"+id, "10.40.4.1", true, withExtraLabels(cpLabel))
 
 	pre := &corev1.Service{
-		ObjectMeta: metav1.ObjectMeta{Name: id, Namespace: testNamespace},
+		Name: id, Namespace: testNamespace,
 		Spec: corev1.ServiceSpec{
 			Ports: []corev1.ServicePort{{Name: "metrics", Port: 9999, Protocol: corev1.ProtocolTCP}},
 			// ClusterIP left unset: API server allocates a real cluster IP,
@@ -254,7 +252,7 @@ func TestReconcile_AdoptingNonHeadlessForeignService_ErrorsRatherThanSilentlyDri
 	}
 	t.Cleanup(func() {
 		_ = k8sClient.Delete(context.Background(), &corev1.Service{
-			ObjectMeta: metav1.ObjectMeta{Name: id, Namespace: testNamespace},
+			Name: id, Namespace: testNamespace,
 		})
 	})
 	if pre.Spec.ClusterIP == "" || pre.Spec.ClusterIP == corev1.ClusterIPNone {
@@ -361,7 +359,7 @@ func TestReconcile_ServiceRecreatedExternally_OwnerReferenceUIDUpdated(t *testin
 
 	oldUID := getService(t, ctx, id).UID
 
-	if err := k8sClient.Delete(ctx, &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: id, Namespace: testNamespace}}); err != nil {
+	if err := k8sClient.Delete(ctx, &corev1.Service{Name: id, Namespace: testNamespace}); err != nil {
 		t.Fatalf("deleting Service: %v", err)
 	}
 
