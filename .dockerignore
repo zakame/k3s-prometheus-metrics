@@ -1,8 +1,0 @@
-.git/
-.github/
-bin/
-dist/
-deploy/
-*.md
-coverage.txt
-unit-tests.json
