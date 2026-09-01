@@ -16,7 +16,7 @@ import (
 	"github.com/zakame/k3s-prometheus-metrics/internal/config"
 )
 
-// listNodesByService is unexported, so these are white-box (same package).
+// ListNodesByService lives in this package, so these are white-box tests.
 
 func testScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
@@ -48,14 +48,14 @@ func TestListNodesByService_DedupesBySelector_OneListCallPerDistinctSelector(t *
 		}).
 		Build()
 
-	r := &NodeReconciler{Client: c, Config: config.Config{
+	cfg := config.Config{
 		NodeSelector: map[string]string{"role": "control-plane"},
 		Services:     config.DefaultServices,
-	}}
+	}
 
-	got, err := r.listNodesByService(context.Background())
+	got, err := ListNodesByService(context.Background(), c, cfg)
 	if err != nil {
-		t.Fatalf("listNodesByService: %v", err)
+		t.Fatalf("ListNodesByService: %v", err)
 	}
 
 	if nodeListCalls != 2 {
@@ -85,18 +85,18 @@ func TestListNodesByService_CustomSelectorIsolatedFromSharedAndEmpty(t *testing.
 		WithObjects(cpNode, agentNode, edgeNode).
 		Build()
 
-	r := &NodeReconciler{Client: c, Config: config.Config{
+	cfg := config.Config{
 		NodeSelector: map[string]string{"role": "control-plane"},
 		Services: []config.Service{
 			{Name: "kube-scheduler"},                                              // nil -> inherits control-plane selector
 			{Name: "kube-proxy", NodeSelector: map[string]string{}},               // empty -> all nodes
 			{Name: "custom-svc", NodeSelector: map[string]string{"tier": "edge"}}, // distinct, non-empty
 		},
-	}}
+	}
 
-	got, err := r.listNodesByService(context.Background())
+	got, err := ListNodesByService(context.Background(), c, cfg)
 	if err != nil {
-		t.Fatalf("listNodesByService: %v", err)
+		t.Fatalf("ListNodesByService: %v", err)
 	}
 
 	if nodes := got["kube-scheduler"]; len(nodes) != 1 || nodes[0].Name != "cp" {
