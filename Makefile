@@ -87,7 +87,7 @@ manifests: ## Generate deploy/standard/role.yaml from +kubebuilder:rbac markers
 		output:rbac:artifacts:config=$(RBAC_OUT)
 
 docker-build: ## Build a local single-arch image only, no push (quick smoke test; use dev-image to test on a cluster)
-	docker build -t $(BINARY):dev .
+	KO_DOCKER_REPO=$(BINARY) go run github.com/google/ko@$(KO_VERSION) build --local --bare --tags=dev $(CMD)
 
 dev-image: ## Build+push a multiarch dev image via ko and generate an untracked overlay pointing at it (usage: make dev-image IMAGE=registry.example.com/k3s-prometheus-metrics TAG=dev)
 	@test -n "$(IMAGE)" || (echo "Error: IMAGE is required, e.g. make dev-image IMAGE=registry.example.com/k3s-prometheus-metrics TAG=dev" >&2; exit 1)
