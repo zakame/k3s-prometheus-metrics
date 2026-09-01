@@ -62,10 +62,6 @@ func TestReconcile_ServiceCreatedEvenWithNoMatchingNodes(t *testing.T) {
 	}
 }
 
-// TestReconcile_ReconcilesExistingHeadlessService covers the migration path
-// from a previous version's static deploy/standard/control-plane-services.yaml:
-// a headless Service with stale ports must be patched to the desired state,
-// not left stale or duplicated.
 // TestReconcile_AppProtocolConsistentAcrossServiceAndEndpointObjects proves
 // the Service's port AppProtocol (added after an earlier gap: BuildServices
 // wasn't setting it at all) matches what EndpointSlice/Endpoints already
@@ -155,6 +151,10 @@ func TestReconcile_AdoptsPreExistingServiceByName_UnlikeEndpointSlice(t *testing
 	}
 }
 
+// TestReconcile_ReconcilesExistingHeadlessService covers the migration path
+// from a previous version's static deploy/standard/control-plane-services.yaml:
+// a headless Service with stale ports must be patched to the desired state,
+// not left stale or duplicated.
 func TestReconcile_ReconcilesExistingHeadlessService(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), reconcileTimeout)
 	defer cancel()
