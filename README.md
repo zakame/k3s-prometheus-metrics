@@ -211,8 +211,8 @@ needs editing or reverting. It needs registry auth already configured
 (`ko` reads the local Docker credential store, same as `docker login`).
 
 For a quick local smoke test without pushing anywhere, `make docker-build`
-still builds a single-arch image locally (`$(BINARY):dev`) with plain
-`docker build`.
+builds a single-arch image locally (`$(BINARY):dev`) via `ko build --local`,
+loaded straight into the local Docker daemon.
 
 ### Port names and existing kube-prometheus ServiceMonitors
 
