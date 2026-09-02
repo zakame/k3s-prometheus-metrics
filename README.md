@@ -96,7 +96,7 @@ These ports are stable and version-independent. The older insecure ports
 (10251/10252) were removed upstream in Kubernetes 1.22/1.23, so this
 controller does not fall back to them.
 
-### Features
+## Features
 
 - Watches Node objects and tracks control-plane readiness automatically.
   No static target lists to maintain as nodes join, leave, or change role.
