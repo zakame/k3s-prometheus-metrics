@@ -23,30 +23,16 @@ import (
 func runManifests(args []string) {
 	fs := flag.NewFlagSet("manifests", flag.ExitOnError)
 
-	var (
-		namespace            string
-		nodeSelectorFlag     string
-		writeLegacyEndpoints bool
-	)
-	fs.StringVar(&namespace, "namespace", "kube-system",
-		"Namespace the generated Service/EndpointSlice (and, if enabled, Endpoints) manifests target.")
-	fs.StringVar(&nodeSelectorFlag, "node-selector", config.ControlPlaneNodeSelector+"=true",
-		"Comma-separated key=value node label selector identifying control-plane nodes. Same meaning as the controller's --node-selector.")
-	fs.BoolVar(&writeLegacyEndpoints, "write-legacy-endpoints", false,
+	cf := registerConfigFlags(fs,
+		"Namespace the generated Service/EndpointSlice (and, if enabled, Endpoints) manifests target.",
+		"Comma-separated key=value node label selector identifying control-plane nodes. Same meaning as the controller's --node-selector.",
 		"Also emit legacy v1 Endpoints manifests, for Kubernetes clusters older than 1.33.")
 	_ = fs.Parse(args) // ExitOnError already exits on failure or -h
 
-	nodeSelector, err := parseSelector(nodeSelectorFlag)
+	cfg, err := cf.build()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "invalid --node-selector: %v\n", err)
 		os.Exit(1)
-	}
-
-	cfg := config.Config{
-		Namespace:            namespace,
-		NodeSelector:         nodeSelector,
-		WriteLegacyEndpoints: writeLegacyEndpoints,
-		Services:             config.DefaultServices,
 	}
 
 	c, err := client.New(ctrl.GetConfigOrDie(), client.Options{Scheme: runtimeScheme})
@@ -55,7 +41,7 @@ func runManifests(args []string) {
 		os.Exit(1)
 	}
 
-	if err := generateManifests(context.Background(), os.Stdout, c, cfg); err != nil {
+	if err := generateManifests(context.Background(), os.Stdout, c, *cfg); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
