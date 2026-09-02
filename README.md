@@ -312,11 +312,12 @@ kube-prometheus-stack users, or anyone not already running kube-prometheus's
 stock ones.
 
 kube-proxy has **no upstream kube-prometheus ServiceMonitor at all**. Its
-metrics port is unauthenticated plain HTTP rather than HTTPS with delegated
-authz, so it doesn't fit the scheduler/controller-manager pattern.
-kube-prometheus also drops it, for the same host-network/loopback-bind
-story this project exists to work around. The `http-metrics` port name and its
-ServiceMonitor entry are this project's own convention.
+metrics port is unauthenticated plain HTTP rather than HTTPS with
+delegated authz, so it doesn't fit the scheduler/controller-manager
+pattern. kube-prometheus also drops it, for the same
+host-network/loopback-bind story this project exists to work around. The
+`http-metrics` port name and its ServiceMonitor entry are this project's
+own convention.
 
 ### Prerequisite: Prometheus RBAC for secured metrics endpoints
 
@@ -424,11 +425,11 @@ controller `ownerReference`, Kubernetes's built-in parent/child link for
 garbage collection. Deleting the Service is enough to delete the
 EndpointSlice/Endpoints too, with nothing left behind.
 
-The controller creates and owns all of this
-itself, so existing kube-prometheus/kube-prometheus-stack ServiceMonitors
-pick up the targets with no relabeling changes and no separate manifest to
-apply for the Services. See the diagram near the top of this README for
-how these objects, the controller, and Prometheus's `ServiceMonitor` all
+The controller creates and owns all of this itself, so existing
+kube-prometheus/kube-prometheus-stack ServiceMonitors pick up the
+targets with no relabeling changes and no separate manifest to apply
+for the Services. See the diagram near the top of this README for how
+these objects, the controller, and Prometheus's `ServiceMonitor` all
 connect.
 
 ## License
