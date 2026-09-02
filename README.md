@@ -1,17 +1,17 @@
 ### k3s-prometheus-metrics - expose k3s control-plane metrics to Prometheus
 
 This is a Kubernetes controller that watches Node objects on a
-[k3s](https://k3s.io/) cluster and creates/updates
+[k3s](https://k3s.io/) cluster. It creates and updates
 [`discovery.k8s.io/v1` EndpointSlice](https://kubernetes.io/docs/concepts/services-networking/endpoint-slices/)
-objects (a list of IP:port targets behind a Service, and the modern
-replacement for the older `v1` Endpoints API; optionally this controller
-also writes legacy `v1` Endpoints, for Kubernetes older than 1.33) pointing
-at the kube-scheduler and kube-controller-manager metrics ports on each
-control-plane node, and the kube-proxy metrics port on every node. That
-lets an in-cluster Prometheus (via
-[kube-prometheus] jsonnet or the [kube-prometheus-stack] Helm chart) scrape
-control-plane metrics the same way it would on a normal upstream Kubernetes
-cluster.
+objects -- a list of IP:port targets behind a Service, and the modern
+replacement for the older `v1` Endpoints API. It can also optionally write
+legacy `v1` Endpoints, for Kubernetes older than 1.33.
+
+These objects point at the kube-scheduler and kube-controller-manager
+metrics ports on each control-plane node, and the kube-proxy metrics port
+on every node. That lets an in-cluster Prometheus (via [kube-prometheus]
+jsonnet or the [kube-prometheus-stack] Helm chart) scrape control-plane
+metrics the same way it would on a normal upstream Kubernetes cluster.
 
 [kube-prometheus]: https://github.com/prometheus-operator/kube-prometheus
 [kube-prometheus-stack]: https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack
@@ -187,8 +187,8 @@ Endpoints itself.
 Since it doesn't set `ownerReferences` (there's no live Service to own them
 against yet), re-running and re-applying won't clean up a service whose
 node set has dropped to zero. Prune by label instead. Service and (legacy)
-Endpoints carry `app.kubernetes.io/managed-by`; EndpointSlice carries a
-different label, `endpointslice.kubernetes.io/managed-by`, so pruning both
+Endpoints carry `app.kubernetes.io/managed-by`. EndpointSlice carries a
+different label, `endpointslice.kubernetes.io/managed-by`. Pruning both
 kinds takes two commands:
 
 ```bash
@@ -227,12 +227,12 @@ and owns them on first reconcile (see [Architecture](#architecture) below).
 ### Local/dev testing: `deploy/dev/`
 
 [`deploy/dev/`](deploy/dev/) is a Kustomize overlay on top of
-`deploy/standard/` for iterating against your own image on a private
-registry, and for testing on a cluster that doesn't have the Prometheus
-Operator's `ServiceMonitor` CRD installed at all: it patches out
-`servicemonitor.yaml`'s three `ServiceMonitor` objects and `namespace.yaml`
-(so it also won't fight a `monitoring` Namespace already managed by a live
-kube-prometheus-stack install). Point it at your own image, then apply:
+`deploy/standard/`. Use it to iterate against your own image on a private
+registry, or to test on a cluster that doesn't have the Prometheus
+Operator's `ServiceMonitor` CRD installed at all. It patches out
+`servicemonitor.yaml`'s three `ServiceMonitor` objects and `namespace.yaml`,
+so it also won't fight a `monitoring` Namespace already managed by a live
+kube-prometheus-stack install. Point it at your own image, then apply:
 
 ```bash
 make dev-image IMAGE=registry.example.com/k3s-prometheus-metrics TAG=dev
@@ -240,7 +240,7 @@ kubectl apply -k deploy/dev-local/
 ```
 
 `make dev-image` builds and pushes a linux/amd64+linux/arm64 image via
-[`ko`](https://ko.build/) (the same tool the release path uses), then
+[`ko`](https://ko.build/) (the same tool the release path uses). It then
 generates `deploy/dev-local/kustomization.yaml` -- an overlay on top of
 `deploy/dev/` pointing at your image. That file is gitignored and
 regenerated on every run, so `deploy/dev/kustomization.yaml` itself never
@@ -271,9 +271,9 @@ stock ones.
 
 kube-proxy has **no upstream kube-prometheus ServiceMonitor at all**. Its
 metrics port is unauthenticated plain HTTP rather than HTTPS with delegated
-authz, so it doesn't fit the scheduler/controller-manager pattern, and
-kube-prometheus drops it for the same host-network/loopback-bind story this
-project exists to work around. The `http-metrics` port name and its
+authz, so it doesn't fit the scheduler/controller-manager pattern.
+kube-prometheus also drops it, for the same host-network/loopback-bind
+story this project exists to work around. The `http-metrics` port name and its
 ServiceMonitor entry are this project's own convention.
 
 ### Prerequisite: Prometheus RBAC for secured metrics endpoints
@@ -304,10 +304,10 @@ it needs rather than one broad grant:
   `+kubebuilder:rbac` markers via `make manifests`.
 - `role-endpoints.yaml` + `rolebinding-endpoints.yaml`: a namespaced
   `Role`/`RoleBinding` **in `kube-system`** (matching the `--namespace`
-  default) granting `get`, `list`, `watch`, `create`, `update` on
-  `discovery.k8s.io` `endpointslices` and core `endpoints`/`services` (the
-  latter for the selector-less Services the controller now creates and
-  owns itself). No `patch` verb: the controller only ever does
+  default). It grants `get`, `list`, `watch`, `create`, `update` on
+  `discovery.k8s.io` `endpointslices` and core `endpoints`/`services` --
+  the latter for the selector-less Services the controller now creates and
+  owns itself. No `patch` verb: the controller only ever does
   read-then-create-or-update, never a partial patch. If you change
   `--namespace`, this Role and RoleBinding must move to that namespace too.
   Hand-maintained rather than generated, since
@@ -316,10 +316,10 @@ it needs rather than one broad grant:
   namespaced roles.
 - `role-leader-election.yaml` + `rolebinding-leader-election.yaml`: a
   namespaced `Role`/`RoleBinding` **in `monitoring`** (the controller's own
-  namespace) granting access to `coordination.k8s.io` `leases`, needed
+  namespace). It grants access to `coordination.k8s.io` `leases`, needed
   because `--leader-elect` coordinates via a Lease in the pod's own
-  namespace, plus `create`/`patch` on core `events`, since leadership
-  changes record Events against that Lease.
+  namespace. It also grants `create`/`patch` on core `events`, since
+  leadership changes record Events against that Lease.
 
 The net effect: a compromised controller pod can read Nodes cluster-wide,
 but can only create/modify Services, EndpointSlices, Endpoints, or Leases
@@ -336,10 +336,11 @@ kubectl get endpointslices -n kube-system -l endpointslice.kubernetes.io/managed
 ```
 
 should list one EndpointSlice per service (`kube-scheduler-metrics`,
-`kube-controller-manager-metrics`, `kube-proxy-metrics`), each with one
-endpoint address per matching node (control-plane nodes only for
-kube-scheduler/kube-controller-manager; every node for kube-proxy). From
-there, check
+`kube-controller-manager-metrics`, `kube-proxy-metrics`). Each has one
+endpoint address per matching node -- control-plane nodes only for
+kube-scheduler/kube-controller-manager, every node for kube-proxy.
+
+From there, check
 Prometheus's own **Status → Targets** page for the `kube-scheduler`,
 `kube-controller-manager`, and `kube-proxy` jobs to confirm scrapes are
 succeeding. A `context deadline exceeded` or `403`-style scrape error there
@@ -372,13 +373,16 @@ labels, not an EndpointSlice directly. Without a Service to select on, a
 `ServiceMonitor` has nothing to attach to, no matter how correct the
 EndpointSlice's target list is. So this controller creates a normal-looking
 Service for each of kube-scheduler, kube-controller-manager, and kube-proxy,
-except with no `spec.selector`, since nothing is pod-backed here, unlike
-a typical Service that fronts a Deployment's Pods. It then owns the
-EndpointSlice (and, if enabled, the legacy Endpoints object) that supplies
-that Service's actual targets, via a controller `ownerReference`:
-Kubernetes's built-in parent/child link for garbage collection, so
-deleting the Service is enough to delete the EndpointSlice/Endpoints too,
-with nothing left behind. The controller creates and owns all of this
+but with no `spec.selector`. Nothing is pod-backed here, unlike a typical
+Service that fronts a Deployment's Pods.
+
+It then owns the EndpointSlice (and, if enabled, the legacy Endpoints
+object) that supplies that Service's actual targets. It does this via a
+controller `ownerReference`, Kubernetes's built-in parent/child link for
+garbage collection. Deleting the Service is enough to delete the
+EndpointSlice/Endpoints too, with nothing left behind.
+
+The controller creates and owns all of this
 itself, so existing kube-prometheus/kube-prometheus-stack ServiceMonitors
 pick up the targets with no relabeling changes and no separate manifest to
 apply for the Services. See the diagram near the top of this README for
