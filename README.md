@@ -106,6 +106,9 @@ controller does not fall back to them.
   older than 1.33
 - Designed to be scraped like a normal upstream Kubernetes control plane.
   No custom relabeling required in kube-prometheus/kube-prometheus-stack.
+- Optional one-shot `manifests` subcommand: generate the same manifests
+  once for clusters that don't change often, no controller running
+  continuously.
 
 ## Installation
 
