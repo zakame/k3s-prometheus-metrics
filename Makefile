@@ -7,11 +7,13 @@ CGO_ENABLED         ?= 0
 RBAC_PATHS          := ./internal/controller/...
 RBAC_OUT            := deploy/standard
 ENVTEST_K8S_VERSION := 1.36.2
-# ko is pinned by @version, not a go.mod tool directive: it (via its
-# sigstore/cosign dependency) forces k8s.io/api,apimachinery,client-go
-# ahead of what this controller otherwise needs, which the other dev tools
-# don't.
+# ko and golangci-lint are pinned by @version, not a go.mod tool
+# directive: both drag in dependency upgrades (ko via sigstore/cosign,
+# golangci-lint via its ~100 bundled linters) that outpace what this
+# controller otherwise needs, which the other dev tools don't.
 KO_VERSION          := v0.19.1
+# Keep in sync with .github/workflows/ci.yaml's golangci-lint-action version.
+GOLANGCI_LINT_VERSION := v2.13.1
 DEV_PLATFORMS       := linux/amd64,linux/arm64
 DEV_PLACEHOLDER     := CHANGE-ME/k3s-prometheus-metrics
 DEV_LOCAL_KUSTOMIZATION := deploy/dev-local/kustomization.yaml
@@ -47,13 +49,8 @@ cover: ## Run tests with coverage report
 	go test -cover -coverpkg=./... -coverprofile=coverage.txt -covermode=atomic ./...
 	go tool cover -func=coverage.txt
 
-lint: ## Run golangci-lint if available, otherwise fall back to go vet
-	@if command -v golangci-lint >/dev/null 2>&1; then \
-		golangci-lint run; \
-	else \
-		echo "golangci-lint not found, falling back to go vet"; \
-		go vet ./...; \
-	fi
+lint: ## Run golangci-lint, the same version CI uses
+	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) run
 
 vet: ## Run go vet
 	go vet ./...

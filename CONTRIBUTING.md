@@ -43,8 +43,9 @@ without needing a separate type taxonomy.
 
 Run the same checks CI runs on every pull request, and make sure they pass:
 
-- `make build`, `make vet`, `make fmt`, and `make lint` (falls back to
-  `go vet` if `golangci-lint` isn't installed locally).
+- `make build`, `make vet`, `make fmt`, and `make lint` (fetches the
+  pinned `golangci-lint` version via `go run`, same as CI -- no local
+  install needed).
 - `make test` (unit tests).
 - `make test-integration` (envtest-backed reconciler/RBAC tests in
   `test/integration/`; downloads a pinned `kube-apiserver`/`etcd` via
