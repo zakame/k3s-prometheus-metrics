@@ -12,7 +12,6 @@ ENVTEST_K8S_VERSION := 1.36.2
 # golangci-lint via its ~100 bundled linters) that outpace what this
 # controller otherwise needs, which the other dev tools don't.
 KO_VERSION          := v0.19.1
-# Keep in sync with .github/workflows/ci.yaml's golangci-lint-action version.
 GOLANGCI_LINT_VERSION := v2.13.1
 DEV_PLATFORMS       := linux/amd64,linux/arm64
 DEV_PLACEHOLDER     := CHANGE-ME/k3s-prometheus-metrics
