@@ -39,6 +39,29 @@ flowchart TB
     Prometheus -- scrapes metrics port on --> Node
 ```
 
+## Quick Start
+
+Your k3s nodes need their metrics ports enabled first -- see [Enabling
+the metrics ports on k3s](#enabling-the-metrics-ports-on-k3s) below. Then
+pick one:
+
+**Deploy as a controller**, for clusters that change (nodes join, leave,
+autoscale):
+
+```bash
+kubectl apply -k deploy/standard/
+```
+
+**Generate manifests once**, for clusters that don't (a homelab, a static
+on-prem cluster) -- see [One-shot manifest
+generation](#one-shot-manifest-generation-manifests-subcommand) below:
+
+```bash
+go run github.com/zakame/k3s-prometheus-metrics/cmd/k3s-prometheus-metrics manifests \
+  --node-selector=node-role.kubernetes.io/control-plane=true > manifests.yaml
+kubectl apply -f manifests.yaml
+```
+
 ## Background
 
 Unlike upstream Kubernetes, k3s does not ship Services/EndpointSlices for
