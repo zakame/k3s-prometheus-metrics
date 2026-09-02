@@ -59,8 +59,9 @@ func runController() {
 	)
 
 	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "Usage of %s:\n", os.Args[0])
-		fmt.Fprintf(flag.CommandLine.Output(), "  Also see '%s manifests -h' for one-shot generation instead of running continuously.\n", os.Args[0])
+		out := flag.CommandLine.Output()
+		_, _ = fmt.Fprintf(out, "Usage of %s:\n", os.Args[0])
+		_, _ = fmt.Fprintf(out, "  Also see '%s manifests -h' for one-shot generation instead of running continuously.\n", os.Args[0])
 		flag.PrintDefaults()
 	}
 
