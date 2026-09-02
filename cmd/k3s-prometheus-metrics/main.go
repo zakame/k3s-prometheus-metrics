@@ -29,7 +29,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
-	"github.com/zakame/k3s-prometheus-metrics/internal/config"
 	"github.com/zakame/k3s-prometheus-metrics/internal/controller"
 )
 
@@ -50,9 +49,6 @@ func main() {
 
 func runController() {
 	var (
-		namespace            string
-		nodeSelectorFlag     string
-		writeLegacyEndpoints bool
 		metricsAddr          string
 		probeAddr            string
 		enableLeaderElection bool
@@ -65,15 +61,13 @@ func runController() {
 		flag.PrintDefaults()
 	}
 
-	flag.StringVar(&namespace, "namespace", "kube-system",
+	cf := registerConfigFlags(flag.CommandLine,
 		"Namespace to create/update EndpointSlice (and, if enabled, Endpoints) objects in. "+
-			"This is independent of the namespace the controller itself is deployed in.")
-	flag.StringVar(&nodeSelectorFlag, "node-selector", config.ControlPlaneNodeSelector+"=true",
+			"This is independent of the namespace the controller itself is deployed in.",
 		"Comma-separated key=value node label selector identifying control-plane nodes, "+
 			"for kube-scheduler and kube-controller-manager. k3s sets this label with value "+
 			"\"true\"; a generic kubeadm cluster would use an empty value instead. Not used "+
-			"for kube-proxy, which always matches every node regardless of this flag.")
-	flag.BoolVar(&writeLegacyEndpoints, "write-legacy-endpoints", false,
+			"for kube-proxy, which always matches every node regardless of this flag.",
 		"Also create/update legacy v1 Endpoints objects, for Kubernetes clusters older than 1.33.")
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080",
 		"Address the controller's own Prometheus metrics endpoint binds to.")
@@ -89,17 +83,10 @@ func runController() {
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 	logger := ctrl.Log.WithName("setup")
 
-	nodeSelector, err := parseSelector(nodeSelectorFlag)
+	cfg, err := cf.build()
 	if err != nil {
 		logger.Error(err, "invalid --node-selector")
 		os.Exit(1)
-	}
-
-	cfg := config.Config{
-		Namespace:            namespace,
-		NodeSelector:         nodeSelector,
-		WriteLegacyEndpoints: writeLegacyEndpoints,
-		Services:             config.DefaultServices,
 	}
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
@@ -113,8 +100,8 @@ func runController() {
 		// cluster-wide.
 		Cache: cache.Options{
 			ByObject: map[client.Object]cache.ByObject{
-				&corev1.Service{}:            {Namespaces: map[string]cache.Config{namespace: {}}},
-				&discoveryv1.EndpointSlice{}: {Namespaces: map[string]cache.Config{namespace: {}}},
+				&corev1.Service{}:            {Namespaces: map[string]cache.Config{cfg.Namespace: {}}},
+				&discoveryv1.EndpointSlice{}: {Namespaces: map[string]cache.Config{cfg.Namespace: {}}},
 			},
 		},
 	})
@@ -125,10 +112,10 @@ func runController() {
 
 	reconciler := &controller.NodeReconciler{
 		Client: mgr.GetClient(),
-		Config: cfg,
+		Config: *cfg,
 	}
 
-	if writeLegacyEndpoints {
+	if cfg.WriteLegacyEndpoints {
 		legacyClient, err := newLegacyEndpointsClient(mgr)
 		if err != nil {
 			logger.Error(err, "unable to create legacy endpoints client")
