@@ -58,6 +58,12 @@ func runController() {
 		enableLeaderElection bool
 	)
 
+	flag.Usage = func() {
+		fmt.Fprintf(flag.CommandLine.Output(), "Usage of %s:\n", os.Args[0])
+		fmt.Fprintf(flag.CommandLine.Output(), "  Also see '%s manifests -h' for one-shot generation instead of running continuously.\n", os.Args[0])
+		flag.PrintDefaults()
+	}
+
 	flag.StringVar(&namespace, "namespace", "kube-system",
 		"Namespace to create/update EndpointSlice (and, if enabled, Endpoints) objects in. "+
 			"This is independent of the namespace the controller itself is deployed in.")
