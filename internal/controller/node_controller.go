@@ -11,6 +11,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -116,28 +117,72 @@ func ListNodesByService(ctx context.Context, c client.Client, cfg config.Config)
 	return byService, nil
 }
 
+// applyAll creates/updates each of want via CreateOrUpdate, applying mutate
+// to copy the type-specific fields callers care about, and returns the
+// applied objects (with server-populated fields such as UID/
+// ResourceVersion) in the same order. kind names the object kind in a
+// wrapped error, since typed clients don't populate GroupVersionKind.
+func applyAll[T any, PT interface {
+	*T
+	client.Object
+}](ctx context.Context, c client.Client, want []T, kind string, mutate func(got, desired PT)) ([]T, error) {
+	applied := make([]T, len(want))
+	for i := range want {
+		desired := PT(&want[i])
+		got := new(T)
+		gotPT := PT(got)
+		gotPT.SetName(desired.GetName())
+		gotPT.SetNamespace(desired.GetNamespace())
+
+		if _, err := controllerutil.CreateOrUpdate(ctx, c, gotPT, func() error {
+			mutate(gotPT, desired)
+			return nil
+		}); err != nil {
+			return nil, fmt.Errorf("applying %s %s/%s: %w", kind, desired.GetNamespace(), desired.GetName(), err)
+		}
+		applied[i] = *got
+	}
+	return applied, nil
+}
+
+// ownAll sets a controller OwnerReference from each of objs to its matching
+// Service (looked up by the discovery.k8s.io/v1 LabelServiceName label), so
+// deleting the Service garbage-collects objs. An object with no matching
+// Service is left unowned. kind names the object kind in a wrapped error.
+func ownAll[T any, PT interface {
+	*T
+	client.Object
+}](objs []T, svcs map[string]corev1.Service, scheme *runtime.Scheme, kind string) error {
+	for i := range objs {
+		obj := PT(&objs[i])
+		svc, ok := svcs[obj.GetLabels()[discoveryv1.LabelServiceName]]
+		if !ok {
+			continue
+		}
+		if err := controllerutil.SetControllerReference(&svc, obj, scheme); err != nil {
+			return fmt.Errorf("owning %s %s: %w", kind, obj.GetName(), err)
+		}
+	}
+	return nil
+}
+
 // applyServices creates/updates the selector-less Service per
 // config.Service, returning each by name so callers can own EndpointSlice/
 // Endpoints against it.
 func (r *NodeReconciler) applyServices(ctx context.Context) (map[string]corev1.Service, error) {
 	want := endpoints.BuildServices(r.Config)
-	svcs := make(map[string]corev1.Service, len(want))
-	for i := range want {
-		desired := &want[i]
-		got := &corev1.Service{}
-		got.Name = desired.Name
-		got.Namespace = desired.Namespace
-
-		if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, got, func() error {
-			got.Labels = desired.Labels
-			got.Spec.Ports = desired.Spec.Ports
-			got.Spec.Selector = desired.Spec.Selector
-			got.Spec.ClusterIP = corev1.ClusterIPNone
-			return nil
-		}); err != nil {
-			return nil, fmt.Errorf("applying service %s/%s: %w", desired.Namespace, desired.Name, err)
-		}
-		svcs[got.Name] = *got
+	applied, err := applyAll(ctx, r.Client, want, "service", func(got, desired *corev1.Service) {
+		got.Labels = desired.Labels
+		got.Spec.Ports = desired.Spec.Ports
+		got.Spec.Selector = desired.Spec.Selector
+		got.Spec.ClusterIP = corev1.ClusterIPNone
+	})
+	if err != nil {
+		return nil, err
+	}
+	svcs := make(map[string]corev1.Service, len(applied))
+	for _, svc := range applied {
+		svcs[svc.Name] = svc
 	}
 	return svcs, nil
 }
@@ -145,51 +190,23 @@ func (r *NodeReconciler) applyServices(ctx context.Context) (map[string]corev1.S
 // ownEndpointSlices sets a controller OwnerReference from each slice to its
 // matching Service, so deleting the Service garbage-collects its slices.
 func (r *NodeReconciler) ownEndpointSlices(slices []discoveryv1.EndpointSlice, svcs map[string]corev1.Service) error {
-	for i := range slices {
-		svc, ok := svcs[slices[i].Labels[discoveryv1.LabelServiceName]]
-		if !ok {
-			continue
-		}
-		if err := controllerutil.SetControllerReference(&svc, &slices[i], r.Scheme()); err != nil {
-			return fmt.Errorf("owning endpointslice %s: %w", slices[i].Name, err)
-		}
-	}
-	return nil
+	return ownAll(slices, svcs, r.Scheme(), "endpointslice")
 }
 
 // ownEndpoints is ownEndpointSlices for the legacy Endpoints path.
 func (r *NodeReconciler) ownEndpoints(eps []corev1.Endpoints, svcs map[string]corev1.Service) error { //nolint:staticcheck // SA1019: intentional legacy support for Kubernetes <1.33
-	for i := range eps {
-		svc, ok := svcs[eps[i].Labels[discoveryv1.LabelServiceName]]
-		if !ok {
-			continue
-		}
-		if err := controllerutil.SetControllerReference(&svc, &eps[i], r.Scheme()); err != nil {
-			return fmt.Errorf("owning endpoints %s: %w", eps[i].Name, err)
-		}
-	}
-	return nil
+	return ownAll(eps, svcs, r.Scheme(), "endpoints")
 }
 
 func (r *NodeReconciler) applyEndpointSlices(ctx context.Context, want []discoveryv1.EndpointSlice) error {
-	for i := range want {
-		desired := &want[i]
-		got := &discoveryv1.EndpointSlice{}
-		got.Name = desired.Name
-		got.Namespace = desired.Namespace
-
-		if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, got, func() error {
-			got.Labels = desired.Labels
-			got.AddressType = desired.AddressType
-			got.Endpoints = desired.Endpoints
-			got.Ports = desired.Ports
-			got.OwnerReferences = desired.OwnerReferences
-			return nil
-		}); err != nil {
-			return fmt.Errorf("applying endpointslice %s/%s: %w", desired.Namespace, desired.Name, err)
-		}
-	}
-	return nil
+	_, err := applyAll(ctx, r.Client, want, "endpointslice", func(got, desired *discoveryv1.EndpointSlice) {
+		got.Labels = desired.Labels
+		got.AddressType = desired.AddressType
+		got.Endpoints = desired.Endpoints
+		got.Ports = desired.Ports
+		got.OwnerReferences = desired.OwnerReferences
+	})
+	return err
 }
 
 func (r *NodeReconciler) applyLegacyEndpoints(ctx context.Context, want []corev1.Endpoints) error { //nolint:staticcheck // SA1019: intentional legacy support for Kubernetes <1.33
@@ -198,22 +215,12 @@ func (r *NodeReconciler) applyLegacyEndpoints(ctx context.Context, want []corev1
 		c = r.LegacyClient
 	}
 
-	for i := range want {
-		desired := &want[i]
-		got := &corev1.Endpoints{} //nolint:staticcheck
-		got.Name = desired.Name
-		got.Namespace = desired.Namespace
-
-		if _, err := controllerutil.CreateOrUpdate(ctx, c, got, func() error {
-			got.Labels = desired.Labels
-			got.Subsets = desired.Subsets
-			got.OwnerReferences = desired.OwnerReferences
-			return nil
-		}); err != nil {
-			return fmt.Errorf("applying endpoints %s/%s: %w", desired.Namespace, desired.Name, err)
-		}
-	}
-	return nil
+	_, err := applyAll(ctx, c, want, "endpoints", func(got, desired *corev1.Endpoints) { //nolint:staticcheck
+		got.Labels = desired.Labels
+		got.Subsets = desired.Subsets
+		got.OwnerReferences = desired.OwnerReferences
+	})
+	return err
 }
 
 // SetupWithManager wires the reconciler into mgr, watching Node objects.
