@@ -184,6 +184,22 @@ It accepts `--namespace`, `--node-selector`, and `--write-legacy-endpoints`
 Nodes (`get`, `list`); it never touches Services, EndpointSlices, or
 Endpoints itself.
 
+Running it via the container image (`make docker-build`) takes one extra
+step: pass credentials with `KUBECONFIG`. The image has no shell and no
+`HOME`, so the default `~/.kube/config` path won't work, and the subcommand
+has no `-kubeconfig` flag:
+
+```bash
+docker run --rm --network host \
+  -e KUBECONFIG=/kubeconfig -v ~/.kube/config:/kubeconfig:ro \
+  k3s-prometheus-metrics:dev manifests --node-selector=node-role.kubernetes.io/control-plane=true \
+  > manifests.yaml
+```
+
+`--network host` (Linux only) is only needed if your kubeconfig points at
+`127.0.0.1`/`localhost`, which means "the container" from inside it, not
+your host.
+
 Since it doesn't set `ownerReferences` (there's no live Service to own them
 against yet), re-running and re-applying won't clean up a service whose
 node set has dropped to zero. Prune by label instead. Service and (legacy)
