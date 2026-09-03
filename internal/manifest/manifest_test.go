@@ -47,7 +47,7 @@ func TestRender_StampsTypeMeta(t *testing.T) {
 		t.Fatalf("Render: %v", err)
 	}
 
-	for _, doc := range strings.Split(strings.TrimSpace(string(out)), "---\n") {
+	for doc := range strings.SplitSeq(strings.TrimSpace(string(out)), "---\n") {
 		var tm metav1.TypeMeta
 		if err := yaml.Unmarshal([]byte(doc), &tm); err != nil {
 			t.Fatalf("unmarshaling doc: %v\n%s", err, doc)
