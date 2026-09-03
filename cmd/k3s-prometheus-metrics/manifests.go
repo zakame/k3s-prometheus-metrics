@@ -13,6 +13,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	"github.com/zakame/k3s-prometheus-metrics/internal/config"
 	"github.com/zakame/k3s-prometheus-metrics/internal/controller"
@@ -36,6 +37,8 @@ func runManifests(args []string) {
 		os.Exit(2)
 	}
 	_ = fs.Parse(args) // ExitOnError already exits on failure or -h
+
+	ctrl.SetLogger(zap.New())
 
 	cfg, err := cf.build()
 	if err != nil {
