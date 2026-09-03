@@ -18,6 +18,18 @@ jobs:
     - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
       with:
         go-version-file: go.mod
+        cache: false
+    - # setup-go's cache key is shared across every job, and a job skips
+      # saving once that key already has a hit -- so this job's
+      # integration/e2e tag builds in `make fix` never got to persist. A
+      # job-specific key fixes that.
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          ~/go/pkg/mod
+          ~/.cache/go-build
+        key: go-build-lint-${{ runner.os }}-${{ hashFiles('go.sum') }}
+        restore-keys: go-build-lint-${{ runner.os }}-
     - run: make build
     - run: make vet
     - run: make fmt
@@ -117,6 +129,17 @@ jobs:
     - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
       with:
         go-version-file: go.mod
+        cache: false
+    - # Same reasoning as lint's cache step above. Shared across both
+      # matrix legs (no matrix.name in the key) since they build the
+      # identical binary.
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          ~/go/pkg/mod
+          ~/.cache/go-build
+        key: go-build-e2e-${{ runner.os }}-${{ hashFiles('go.sum') }}
+        restore-keys: go-build-e2e-${{ runner.os }}-
     - id: ko-version
       run: echo "version=$(make print-ko-version)" >> "$GITHUB_OUTPUT"
     - # Same reasoning as golangci-lint-action above: ko is also kept out
