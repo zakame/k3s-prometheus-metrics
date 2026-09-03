@@ -83,15 +83,9 @@ func TestKubeconfigFlag_TakesPriorityOverEnvVar(t *testing.T) {
 // TestKubeconfigFlag_ExitsNonZeroForNonexistentFile: --kubeconfig is
 // registered on manifests' own FlagSet via ctrl.RegisterFlags, a different
 // code path than the controller's package-level flag.CommandLine
-// registration, so it needs its own end-to-end check.
-//
-// Unlike the controller entrypoint, runManifests never calls
-// ctrl.SetLogger, so GetConfigOrDie's internal error log goes to
-// controller-runtime's default NullLogSink and never reaches stderr --
-// the process exits 1 with no diagnostic at all. This test pins that
-// (arguably poor) actual behavior rather than an error string that doesn't
-// exist, so a regression either direction (e.g. no longer failing, or
-// gaining/losing the silent-exit quirk) gets caught.
+// registration, so it needs its own end-to-end check. runManifests calls
+// ctrl.SetLogger before GetConfigOrDie, so the failure is diagnosable
+// instead of a bare silent exit.
 func TestRunManifests_KubeconfigFlag_ExitsNonZeroForNonexistentFile(t *testing.T) {
 	bin := buildBinary(t)
 
@@ -100,20 +94,18 @@ func TestRunManifests_KubeconfigFlag_ExitsNonZeroForNonexistentFile(t *testing.T
 	if err == nil {
 		t.Fatalf("expected a non-zero exit code, got success; output:\n%s", out)
 	}
-	if len(out) != 0 {
-		t.Fatalf("expected no output (runManifests never calls ctrl.SetLogger, so GetConfigOrDie's error log is discarded), got:\n%s", out)
+	if !strings.Contains(string(out), "from-cli-flag-only") {
+		t.Fatalf("expected the --kubeconfig path in the error, got:\n%s", out)
 	}
 }
 
-// TestRunManifests_KubeconfigEnvVar_ExitsNonZeroSilently guards that
+// TestRunManifests_KubeconfigEnvVar_ExitsNonZero guards that
 // K3S_PROMETHEUS_METRICS_KUBECONFIG reaches manifests' own FlagSet (via
 // applyEnvDefaults(fs) in runManifests, not the top-level flag.CommandLine
 // applyEnvDefaults tested in TestKubeconfigEnvVar_TakesPriorityOverNativeKUBECONFIG),
 // exercised through the actual "manifests" subcommand rather than just the
-// top-level binary. See the comment on
-// TestRunManifests_KubeconfigFlag_ExitsNonZeroForNonexistentFile for why
-// there's no error text to assert on here.
-func TestRunManifests_KubeconfigEnvVar_ExitsNonZeroSilently(t *testing.T) {
+// top-level binary.
+func TestRunManifests_KubeconfigEnvVar_ExitsNonZero(t *testing.T) {
 	bin := buildBinary(t)
 
 	cmd := exec.Command(bin, "manifests")
@@ -123,8 +115,8 @@ func TestRunManifests_KubeconfigEnvVar_ExitsNonZeroSilently(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected a non-zero exit code, got success; output:\n%s", out)
 	}
-	if len(out) != 0 {
-		t.Fatalf("expected no output (runManifests never calls ctrl.SetLogger, so GetConfigOrDie's error log is discarded), got:\n%s", out)
+	if !strings.Contains(string(out), "from-env-var-manifests") {
+		t.Fatalf("expected the env-seeded --kubeconfig path in the error, got:\n%s", out)
 	}
 }
 
