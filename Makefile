@@ -21,7 +21,7 @@ MERMAID_CLI_VERSION := 11.16.0
 
 .DEFAULT_GOAL := help
 
-.PHONY: help build test test-integration test-e2e cover lint vet fmt manifests docker-build run clean dev-image docs-lint
+.PHONY: help build test test-integration test-e2e cover lint vet fmt fix manifests docker-build run clean dev-image docs-lint
 
 help: ## Show this help message
 	@echo "Usage: make <target>"
@@ -56,6 +56,13 @@ vet: ## Run go vet
 
 fmt: ## Check formatting (exits non-zero if files need formatting)
 	@test -z "$$(gofmt -l .)" || (gofmt -l . && exit 1)
+
+fix: ## Run go fix across all build-tag combinations (no tag, integration, e2e)
+	@# go fix, like go vet, silently skips build-tag-gated files unless
+	@# -tags is passed explicitly, so each tag needs its own invocation.
+	go fix ./...
+	go fix -tags integration ./...
+	go fix -tags e2e ./...
 
 docs-lint: ## Check docs formatting, spelling, and Mermaid diagram syntax
 	go run github.com/golangci/misspell/cmd/misspell -error $$(git ls-files '*.md')
