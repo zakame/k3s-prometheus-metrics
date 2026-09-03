@@ -1,11 +1,13 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/go-logr/logr"
@@ -77,24 +79,51 @@ func TestManifestsUsage_MentionsKubeconfigFlag(t *testing.T) {
 	}
 }
 
-// buildBinary builds the k3s-prometheus-metrics binary once per test into a
-// temp dir, so -h behavior tests exercise what actually ships.
+var (
+	buildBinaryOnce sync.Once
+	builtBinaryPath string
+	buildBinaryErr  error
+)
+
+// buildBinary returns the path to a k3s-prometheus-metrics binary, built
+// once and shared across every test in this package that needs it, so -h
+// and flag-behavior tests exercise what actually ships. go build's darwin
+// codesigning step costs several seconds for a brand-new output path, and
+// building a fresh temp binary per test (as this used to do via
+// t.TempDir()) made this package's test run take nearly a minute.
 func buildBinary(t *testing.T) string {
 	t.Helper()
-	bin := filepath.Join(t.TempDir(), "k3s-prometheus-metrics")
-	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
-		t.Fatalf("building binary: %v\n%s", err, out)
+	buildBinaryOnce.Do(func() {
+		dir, err := os.MkdirTemp("", "k3s-prometheus-metrics-test-bin")
+		if err != nil {
+			buildBinaryErr = fmt.Errorf("creating temp dir for test binary: %w", err)
+			return
+		}
+		bin := filepath.Join(dir, "k3s-prometheus-metrics")
+		if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
+			buildBinaryErr = fmt.Errorf("building binary: %w\n%s", err, out)
+			return
+		}
+		builtBinaryPath = bin
+	})
+	if buildBinaryErr != nil {
+		t.Fatalf("%v", buildBinaryErr)
 	}
-	return bin
+	return builtBinaryPath
 }
 
 // TestMain sets a logger before any test starts an envtest environment --
 // otherwise controller-runtime's delegating log sink falls back to a
 // NullLogSink 30s into the process and dumps a stack trace to stderr on
-// the next log call.
+// the next log call. It also cleans up the shared buildBinary() output,
+// if anything actually built one.
 func TestMain(m *testing.M) {
 	ctrl.SetLogger(logr.Discard())
-	os.Exit(m.Run())
+	code := m.Run()
+	if builtBinaryPath != "" {
+		_ = os.RemoveAll(filepath.Dir(builtBinaryPath))
+	}
+	os.Exit(code)
 }
 
 func TestParseSelector(t *testing.T) {
