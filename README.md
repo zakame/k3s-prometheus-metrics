@@ -182,6 +182,7 @@ directly.
 | `--metrics-bind-address` | `:8080` | Address the controller's own Prometheus metrics endpoint binds to. |
 | `--health-probe-bind-address` | `:8081` | Address the controller's `/healthz` and `/readyz` probe endpoint binds to. |
 | `--leader-elect` | `false` | Enable leader election: if you run more than one replica of the controller, they coordinate via a Kubernetes Lease object to agree on a single active replica, so only one of them reconciles at a time. |
+| `--kubeconfig` | (unset) | Path to a kubeconfig file. Falls back to `KUBECONFIG`, then in-cluster config, then `~/.kube/config` -- controller-runtime's own flag, now registered on both entrypoints (`manifests` included). |
 
 The monitored cluster must be running Kubernetes 1.21 or later, since that
 is when `discovery.k8s.io/v1` EndpointSlice (which this controller always
@@ -190,6 +191,14 @@ writes, regardless of `--write-legacy-endpoints`) graduated to GA.
 The controller also accepts the standard controller-runtime zap logging
 flags (`-zap-devel`, `-zap-encoder`, `-zap-log-level`, `-zap-stacktrace-level`,
 `-zap-time-encoding`).
+
+### Environment variable fallback
+
+Every flag on both entrypoints -- this project's own, `--kubeconfig`, and
+the zap logging flags above -- also reads from
+`K3S_PROMETHEUS_METRICS_<FLAG_NAME>` (uppercased, `-` replaced with `_`),
+e.g. `--node-selector` -> `K3S_PROMETHEUS_METRICS_NODE_SELECTOR`. An
+explicit command-line flag always wins over its env var.
 
 ### One-shot manifest generation: `manifests` subcommand
 
@@ -211,16 +220,21 @@ Nodes (`get`, `list`); it never touches Services, EndpointSlices, or
 Endpoints itself.
 
 Running it via the container image (`make docker-build`) takes one extra
-step: pass credentials with `KUBECONFIG`. The image has no shell and no
-`HOME`, so the default `~/.kube/config` path won't work, and the subcommand
-has no `-kubeconfig` flag:
+step: point it at a mounted kubeconfig file. The image has no shell and no
+`HOME`, so the default `~/.kube/config` path won't work. `--kubeconfig` is
+the simplest way:
 
 ```bash
 docker run --rm --network host \
-  -e KUBECONFIG=/kubeconfig -v ~/.kube/config:/kubeconfig:ro \
-  k3s-prometheus-metrics:dev manifests --node-selector=node-role.kubernetes.io/control-plane=true \
+  -v ~/.kube/config:/kubeconfig:ro \
+  k3s-prometheus-metrics:dev manifests --kubeconfig=/kubeconfig \
+  --node-selector=node-role.kubernetes.io/control-plane=true \
   > manifests.yaml
 ```
+
+The native `KUBECONFIG` env var works the same way too, if you'd rather not
+add the flag -- that's client-go's own precedence, unrelated to this
+project's `K3S_PROMETHEUS_METRICS_*` fallback above.
 
 `--network host` (Linux only) is only needed if your kubeconfig points at
 `127.0.0.1`/`localhost`, which means "the container" from inside it, not
