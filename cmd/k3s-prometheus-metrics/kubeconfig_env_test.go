@@ -37,6 +37,97 @@ func TestKubeconfigEnvVar_TakesPriorityOverNativeKUBECONFIG(t *testing.T) {
 	}
 }
 
+// TestKubeconfigFlag_ExitsNonZeroForNonexistentFile guards that an explicit
+// --kubeconfig CLI flag (not just the env-var fallback) actually reaches
+// GetConfigOrDie for the controller entrypoint: prior coverage only checked
+// that -h output mentions the flag, never that a real value took effect.
+func TestKubeconfigFlag_ExitsNonZeroForNonexistentFile(t *testing.T) {
+	bin := buildBinary(t)
+
+	out, err := exec.Command(bin, "-kubeconfig=/nonexistent/from-cli-flag-only").CombinedOutput()
+
+	if err == nil {
+		t.Fatalf("expected a non-zero exit code, got success; output:\n%s", out)
+	}
+	if !strings.Contains(string(out), "from-cli-flag-only") {
+		t.Fatalf("expected the --kubeconfig path in the error, got:\n%s", out)
+	}
+}
+
+// TestKubeconfigFlag_TakesPriorityOverEnvVar guards that an explicit
+// --kubeconfig CLI flag wins over K3S_PROMETHEUS_METRICS_KUBECONFIG, the same
+// precedence env_flags_test.go already checks for --namespace, but not yet
+// for --kubeconfig specifically -- the flag most likely to matter for
+// cluster safety. Both point at nonexistent files, so the process fails
+// either way; this checks WHICH path it tried, via the error text.
+func TestKubeconfigFlag_TakesPriorityOverEnvVar(t *testing.T) {
+	bin := buildBinary(t)
+
+	cmd := exec.Command(bin, "-kubeconfig=/nonexistent/from-cli-flag")
+	cmd.Env = append(os.Environ(), "K3S_PROMETHEUS_METRICS_KUBECONFIG=/nonexistent/from-env-var")
+	out, err := cmd.CombinedOutput()
+
+	if err == nil {
+		t.Fatalf("expected a non-zero exit code, got success; output:\n%s", out)
+	}
+	if !strings.Contains(string(out), "from-cli-flag") {
+		t.Fatalf("expected the explicit --kubeconfig CLI flag to win, got:\n%s", out)
+	}
+	if strings.Contains(string(out), "from-env-var") {
+		t.Fatalf("expected the env-var path NOT to be used once --kubeconfig is set explicitly, got:\n%s", out)
+	}
+}
+
+// TestRunManifests_KubeconfigFlag_ExitsNonZeroForNonexistentFile is the
+// manifests-subcommand counterpart of
+// TestKubeconfigFlag_ExitsNonZeroForNonexistentFile: --kubeconfig is
+// registered on manifests' own FlagSet via ctrl.RegisterFlags, a different
+// code path than the controller's package-level flag.CommandLine
+// registration, so it needs its own end-to-end check.
+//
+// Unlike the controller entrypoint, runManifests never calls
+// ctrl.SetLogger, so GetConfigOrDie's internal error log goes to
+// controller-runtime's default NullLogSink and never reaches stderr --
+// the process exits 1 with no diagnostic at all. This test pins that
+// (arguably poor) actual behavior rather than an error string that doesn't
+// exist, so a regression either direction (e.g. no longer failing, or
+// gaining/losing the silent-exit quirk) gets caught.
+func TestRunManifests_KubeconfigFlag_ExitsNonZeroForNonexistentFile(t *testing.T) {
+	bin := buildBinary(t)
+
+	out, err := exec.Command(bin, "manifests", "-kubeconfig=/nonexistent/from-cli-flag-only").CombinedOutput()
+
+	if err == nil {
+		t.Fatalf("expected a non-zero exit code, got success; output:\n%s", out)
+	}
+	if len(out) != 0 {
+		t.Fatalf("expected no output (runManifests never calls ctrl.SetLogger, so GetConfigOrDie's error log is discarded), got:\n%s", out)
+	}
+}
+
+// TestRunManifests_KubeconfigEnvVar_ExitsNonZeroSilently guards that
+// K3S_PROMETHEUS_METRICS_KUBECONFIG reaches manifests' own FlagSet (via
+// applyEnvDefaults(fs) in runManifests, not the top-level flag.CommandLine
+// applyEnvDefaults tested in TestKubeconfigEnvVar_TakesPriorityOverNativeKUBECONFIG),
+// exercised through the actual "manifests" subcommand rather than just the
+// top-level binary. See the comment on
+// TestRunManifests_KubeconfigFlag_ExitsNonZeroForNonexistentFile for why
+// there's no error text to assert on here.
+func TestRunManifests_KubeconfigEnvVar_ExitsNonZeroSilently(t *testing.T) {
+	bin := buildBinary(t)
+
+	cmd := exec.Command(bin, "manifests")
+	cmd.Env = append(os.Environ(), "K3S_PROMETHEUS_METRICS_KUBECONFIG=/nonexistent/from-env-var-manifests")
+	out, err := cmd.CombinedOutput()
+
+	if err == nil {
+		t.Fatalf("expected a non-zero exit code, got success; output:\n%s", out)
+	}
+	if len(out) != 0 {
+		t.Fatalf("expected no output (runManifests never calls ctrl.SetLogger, so GetConfigOrDie's error log is discarded), got:\n%s", out)
+	}
+}
+
 // TestZapDevelEnvVar_ReachesZapBoundFlag guards that applyEnvDefaults runs
 // after zap.Options.BindFlags registers its flags, not before -- otherwise
 // the env-var fallback would silently skip every zap flag. --zap-devel
