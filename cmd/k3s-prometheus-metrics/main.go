@@ -78,6 +78,11 @@ func runController() {
 
 	opts := zap.Options{Development: false}
 	opts.BindFlags(flag.CommandLine)
+
+	if err := applyEnvDefaults(flag.CommandLine); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))

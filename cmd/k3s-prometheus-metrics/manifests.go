@@ -27,6 +27,14 @@ func runManifests(args []string) {
 		"Namespace the generated Service/EndpointSlice (and, if enabled, Endpoints) manifests target.",
 		"Comma-separated key=value node label selector identifying control-plane nodes. Same meaning as the controller's --node-selector.",
 		"Also emit legacy v1 Endpoints manifests, for Kubernetes clusters older than 1.33.")
+	// Safe to register here even though --kubeconfig also exists on
+	// flag.CommandLine for the controller path: main.go branches to exactly
+	// one of the two paths per process, never both.
+	ctrl.RegisterFlags(fs)
+	if err := applyEnvDefaults(fs); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
 	_ = fs.Parse(args) // ExitOnError already exits on failure or -h
 
 	cfg, err := cf.build()
