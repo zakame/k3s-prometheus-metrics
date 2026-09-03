@@ -1,11 +1,15 @@
 package main
 
 import (
+	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/go-logr/logr"
+	ctrl "sigs.k8s.io/controller-runtime"
 )
 
 // wantNodeSelectorDefault is k3s's node-role.kubernetes.io/control-plane
@@ -82,6 +86,15 @@ func buildBinary(t *testing.T) string {
 		t.Fatalf("building binary: %v\n%s", err, out)
 	}
 	return bin
+}
+
+// TestMain sets a logger before any test starts an envtest environment --
+// otherwise controller-runtime's delegating log sink falls back to a
+// NullLogSink 30s into the process and dumps a stack trace to stderr on
+// the next log call.
+func TestMain(m *testing.M) {
+	ctrl.SetLogger(logr.Discard())
+	os.Exit(m.Run())
 }
 
 func TestParseSelector(t *testing.T) {

@@ -18,11 +18,13 @@ import (
 	"os"
 	"testing"
 
+	"github.com/go-logr/logr"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 )
@@ -35,6 +37,13 @@ var (
 )
 
 func TestMain(m *testing.M) {
+	// Set a logger before envtest.Start() runs -- otherwise
+	// controller-runtime's delegating log sink falls back to a
+	// NullLogSink 30s into the process and dumps a stack trace to
+	// stderr the first time something logs after that. Discard rather
+	// than a real logger so these tests stay quiet.
+	ctrl.SetLogger(logr.Discard())
+
 	testEnv = &envtest.Environment{}
 
 	restCfg, err := testEnv.Start()
