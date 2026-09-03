@@ -59,6 +59,20 @@ func TestManifestsUsage_DoesNotMentionTopLevelUsage(t *testing.T) {
 	}
 }
 
+// TestManifestsUsage_MentionsKubeconfigFlag guards that "manifests -h" gets
+// --kubeconfig via ctrl.RegisterFlags on its own FlagSet, since it doesn't
+// inherit flag.CommandLine's package-level registration the controller path
+// gets for free.
+func TestManifestsUsage_MentionsKubeconfigFlag(t *testing.T) {
+	bin := buildBinary(t)
+
+	out, _ := exec.Command(bin, "manifests", "-h").CombinedOutput()
+
+	if !strings.Contains(string(out), "-kubeconfig") {
+		t.Fatalf("expected 'manifests -h' output to mention -kubeconfig, got:\n%s", out)
+	}
+}
+
 // buildBinary builds the k3s-prometheus-metrics binary once per test into a
 // temp dir, so -h behavior tests exercise what actually ships.
 func buildBinary(t *testing.T) string {
