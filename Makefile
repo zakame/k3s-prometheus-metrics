@@ -21,7 +21,7 @@ MERMAID_CLI_VERSION := 11.16.0
 
 .DEFAULT_GOAL := help
 
-.PHONY: help build test test-integration test-e2e cover lint vet fmt fix manifests docker-build run clean dev-image docs-lint
+.PHONY: help build test test-integration test-e2e cover lint vet fmt fix manifests docker-build run clean dev-image docs-lint print-golangci-lint-version print-ko-version
 
 help: ## Show this help message
 	@echo "Usage: make <target>"
@@ -50,6 +50,15 @@ cover: ## Run tests with coverage report
 
 lint: ## Run golangci-lint, the same version CI uses
 	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) run
+
+# print-golangci-lint-version and print-ko-version aren't ## documented
+# (kept out of `make help`): CI reads them so golangci-lint-action and
+# setup-ko stay pinned to these vars instead of a second hardcoded version.
+print-golangci-lint-version:
+	@echo $(GOLANGCI_LINT_VERSION)
+
+print-ko-version:
+	@echo $(KO_VERSION)
 
 vet: ## Run go vet
 	go vet ./...

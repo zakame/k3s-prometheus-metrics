@@ -22,7 +22,15 @@ jobs:
     - run: make vet
     - run: make fmt
     - run: make fix && git diff --exit-code
-    - run: make lint
+    - id: golangci-lint-version
+      run: echo "version=$(make print-golangci-lint-version)" >> "$GITHUB_OUTPUT"
+    - # `make lint`'s `go run pkg@version` resolves outside go.mod and
+      # re-downloads golangci-lint's whole dependency tree every run (kept
+      # out of go.mod deliberately, see Makefile). This installs a
+      # prebuilt binary instead.
+      uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+      with:
+        version: ${{ steps.golangci-lint-version.outputs.version }}
 
   test:
     runs-on: ubuntu-latest
@@ -100,20 +108,30 @@ jobs:
           overlay: deploy/e2e-legacy
           write-legacy-endpoints: true
     name: e2e (${{ matrix.name }})
+    env:
+      # Set before setup-ko runs so it skips its ghcr.io login -- this
+      # only ever builds --local, never pushes anywhere.
+      KO_DOCKER_REPO: k3s-prometheus-metrics
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
       with:
         go-version-file: go.mod
+    - id: ko-version
+      run: echo "version=$(make print-ko-version)" >> "$GITHUB_OUTPUT"
+    - # Same reasoning as golangci-lint-action above: ko is also kept out
+      # of go.mod, so `go run ko@version` re-resolves its whole dependency
+      # tree every run. This installs a prebuilt binary instead.
+      uses: ko-build/setup-ko@61b4d1d396f5b2e7d6bb6fefdce3dc38d1a13445 # v0.10
+      with:
+        version: ${{ steps.ko-version.outputs.version }}
     - # kind runs vanilla upstream Kubernetes, which labels control-plane
       # nodes differently from k3s (empty value vs "true"); k3d runs real
       # k3s binaries, so it actually exercises this controller's k3s-specific
       # assumptions.
       run: curl -sf https://raw.githubusercontent.com/k3d-io/k3d/v5.9.0/install.sh | TAG=v5.9.0 bash
     - run: k3d cluster create k3s-prometheus-metrics --image ${{ matrix.k3s-image }} --wait
-    - run: >-
-        KO_DOCKER_REPO=k3s-prometheus-metrics
-        go run github.com/google/ko@v0.19.1 build --local --bare -t e2e ./cmd/k3s-prometheus-metrics
+    - run: ko build --local --bare -t e2e ./cmd/k3s-prometheus-metrics
     - run: k3d image import k3s-prometheus-metrics:e2e -c k3s-prometheus-metrics
     - run: kubectl apply -k ${{ matrix.overlay }}
     - run: kubectl -n monitoring rollout status deployment/k3s-prometheus-metrics --timeout=60s
