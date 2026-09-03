@@ -21,6 +21,7 @@ jobs:
     - run: make build
     - run: make vet
     - run: make fmt
+    - run: make fix && git diff --exit-code
     - run: make lint
 
   test:
