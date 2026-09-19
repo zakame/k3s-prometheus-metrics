@@ -43,8 +43,10 @@ and organized as:
   this table (not flag-configurable) since kube-proxy runs on every node,
   not just control-plane ones
 - `deploy/standard/`: sample manifests (namespace, RBAC, ServiceAccount,
-  Deployment, ServiceMonitor, kustomization) for deploying the controller
-  alongside a kube-prometheus/kube-prometheus-stack install
+  Deployment, ServiceMonitors for the published targets, PodMonitor and
+  PrometheusRule for the controller's own metrics, kustomization) for
+  deploying the controller alongside a kube-prometheus/kube-prometheus-stack
+  install
 - `deploy/e2e/`, `deploy/e2e-legacy/`: kustomize overlays of
   `deploy/standard/` used by CI's e2e suite against a k3d cluster;
   `deploy/e2e-legacy/` additionally sets `--write-legacy-endpoints`, for the
