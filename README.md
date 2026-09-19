@@ -283,6 +283,14 @@ The `kube-scheduler`, `kube-controller-manager`, and `kube-proxy` Service
 objects themselves aren't part of these manifests: the controller creates
 and owns them on first reconcile (see [Architecture](#architecture) below).
 
+A Service that already exists under one of those names is adopted, unless
+it has an allocated ClusterIP: the API server won't let that change to
+headless, so the controller skips that Service and its endpoints, reports
+the error in its pod log and in `controller_runtime_reconcile_errors_total`
+(see [Monitoring the controller itself](#monitoring-the-controller-itself)),
+and still converges the other two. Delete or rename the conflicting Service
+to resolve it.
+
 ### Local/dev testing: `deploy/dev/`
 
 [`deploy/dev/`](deploy/dev/) is a Kustomize overlay on top of
