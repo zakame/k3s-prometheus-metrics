@@ -270,6 +270,9 @@ Sample manifests are available in [`deploy/standard/`](deploy/standard/):
   control-plane nodes with `--leader-elect` enabled
 - `servicemonitor.yaml`: `ServiceMonitor` objects wiring the
   controller-managed Services into a Prometheus Operator setup (see below)
+- `podmonitor.yaml`, `prometheusrule.yaml`: a `PodMonitor` scraping the
+  controller's own metrics and a `PrometheusRule` alerting on reconcile
+  errors (see [Monitoring the controller itself](#monitoring-the-controller-itself))
 - `kustomization.yaml`: ties the above together
 
 ```bash
@@ -285,9 +288,10 @@ and owns them on first reconcile (see [Architecture](#architecture) below).
 [`deploy/dev/`](deploy/dev/) is a Kustomize overlay on top of
 `deploy/standard/`. Use it to iterate against your own image on a private
 registry, or to test on a cluster that doesn't have the Prometheus
-Operator's `ServiceMonitor` CRD installed at all. It patches out
-`servicemonitor.yaml`'s three `ServiceMonitor` objects and `namespace.yaml`,
-so it also won't fight a `monitoring` Namespace already managed by a live
+Operator's `ServiceMonitor`/`PodMonitor` CRDs installed at all. It patches
+out `servicemonitor.yaml`'s three `ServiceMonitor` objects, the
+`PodMonitor` and `PrometheusRule`, and `namespace.yaml`, so it also won't
+fight a `monitoring` Namespace already managed by a live
 kube-prometheus-stack install. Point it at your own image, then apply:
 
 ```bash
@@ -405,6 +409,27 @@ most likely means the metrics port isn't actually bound to a non-loopback
 address yet (see [Enabling the metrics ports on
 k3s](#enabling-the-metrics-ports-on-k3s)), or the Prometheus RBAC
 prerequisite above isn't satisfied.
+
+### Monitoring the controller itself
+
+The controller serves its own Prometheus metrics on `--metrics-bind-address`
+(the Deployment's `metrics` container port, plain HTTP, no RBAC needed to
+scrape). `podmonitor.yaml` is a `PodMonitor` that scrapes it, so the
+controller's health is visible in the same Prometheus as the targets it
+publishes. These are controller-runtime's standard series, labeled
+`controller="node"`:
+
+| Metric | Meaning |
+|--------|---------|
+| `controller_runtime_reconcile_errors_total{controller="node"}` | Reconciles that returned an error. Steadily increasing means the controller can't converge; the pod log has the reason. |
+| `controller_runtime_reconcile_total{controller="node",result="success"}` | Successful reconciles. Flat while nodes are changing means the controller isn't seeing events. |
+| `controller_runtime_reconcile_time_seconds{controller="node"}` | Reconcile latency histogram. |
+
+`prometheusrule.yaml` ships a `PrometheusRule` with one alert,
+`K3sPrometheusMetricsReconcileErrors`, firing when that error counter grew
+in the last hour. The 1h window outlasts controller-runtime's retry
+backoff, which tops out at about 17 minutes between attempts, so a
+persistent failure can't fall between samples.
 
 ## Architecture
 
