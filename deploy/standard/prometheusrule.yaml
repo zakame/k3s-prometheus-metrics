@@ -1,0 +1,21 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: k3s-prometheus-metrics
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: k3s-prometheus-metrics
+spec:
+  groups:
+  - name: k3s-prometheus-metrics
+    rules:
+    - alert: K3sPrometheusMetricsReconcileErrors
+      # The 1h window outlasts controller-runtime's retry backoff, which
+      # tops out at about 17 minutes between attempts, so a persistent
+      # failure can't fall between samples.
+      expr: increase(controller_runtime_reconcile_errors_total{controller="node"}[1h]) > 0
+      labels:
+        severity: warning
+      annotations:
+        summary: k3s-prometheus-metrics is failing to reconcile
+        description: The controller returned reconcile errors in the last hour; its pod log has the cause.

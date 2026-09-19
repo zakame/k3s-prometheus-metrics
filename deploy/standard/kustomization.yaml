@@ -12,3 +12,5 @@ resources:
 - rolebinding-leader-election.yaml
 - deployment.yaml
 - servicemonitor.yaml
+- podmonitor.yaml
+- prometheusrule.yaml
