@@ -104,9 +104,12 @@ func TestApplyAll_CreateOrUpdateErrorIsWrappedWithKindNamespaceName(t *testing.T
 		Build()
 
 	want := []corev1.Service{{Name: "kube-scheduler", Namespace: "kube-system"}}
-	_, err := applyAll(context.Background(), c, want, "widget", func(_, _ *corev1.Service) {})
+	applied, err := applyAll(context.Background(), c, want, "widget", func(_, _ *corev1.Service) {})
 	if err == nil {
 		t.Fatal("expected an error when the underlying Create fails")
+	}
+	if applied == nil || len(applied) != 0 {
+		t.Fatalf("expected a non-nil empty applied slice when every object fails, got %#v", applied)
 	}
 	if !errors.Is(err, boom) {
 		t.Fatalf("expected the wrapped error to satisfy errors.Is against the underlying failure, got %v", err)
