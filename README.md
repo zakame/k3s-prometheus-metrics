@@ -431,6 +431,13 @@ in the last hour. The 1h window outlasts controller-runtime's retry
 backoff, which tops out at about 17 minutes between attempts, so a
 persistent failure can't fall between samples.
 
+Whether the published targets are actually up is a separate question, and
+one Prometheus already answers: the kubernetes-mixin alerts
+`KubeSchedulerDown`, `KubeControllerManagerDown`, and `KubeProxyDown`
+shipped with kube-prometheus and kube-prometheus-stack fire on
+`absent(up{job="..."} == 1)`, and the job names match the Service names
+this controller creates. This project ships no alert of its own for that.
+
 ## Architecture
 
 The controller is built on [controller-runtime](https://github.com/kubernetes-sigs/controller-runtime).
