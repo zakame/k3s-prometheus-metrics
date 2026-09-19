@@ -1,0 +1,18 @@
+# Scrapes the controller's own metrics, so a stuck or erroring reconcile
+# loop shows up in Prometheus as controller_runtime_reconcile_errors_total
+# rather than only in the pod's logs. A PodMonitor rather than a Service +
+# ServiceMonitor: nothing else needs a Service in front of the controller.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: k3s-prometheus-metrics
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: k3s-prometheus-metrics
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: k3s-prometheus-metrics
+  podMetricsEndpoints:
+  - port: metrics
+    interval: 30s
