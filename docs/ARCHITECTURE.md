@@ -21,8 +21,10 @@ and organized as:
   owner (the Service) is deleted, the API server automatically deletes
   everything that points back to it, so deleting the Service is enough to
   clean up the EndpointSlice/Endpoints objects too, with nothing left
-  behind. Its node-listing logic is exported as `ListNodesByService` so the
-  `manifests` subcommand can reuse it.
+  behind. A Service that fails to apply is skipped together with its
+  EndpointSlice/Endpoints so the others still converge; the error is still
+  returned for requeue. Its node-listing logic is exported as
+  `ListNodesByService` so the `manifests` subcommand can reuse it.
 - `internal/endpoints/`: pure, unit-testable builder functions that turn
   `internal/config`'s service table into selector-less Service objects, and
   a set of control-plane nodes into matching `discovery.k8s.io/v1`
