@@ -5,6 +5,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 
@@ -59,33 +60,35 @@ func (r *NodeReconciler) Reconcile(ctx context.Context, _ ctrl.Request) (ctrl.Re
 		logger.V(1).Info("discovered nodes", "service", name, "names", nodeNames(nodes))
 	}
 
-	svcs, err := r.applyServices(ctx)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
+	// A Service that can't be applied (e.g. a pre-existing one with an
+	// allocated ClusterIP, which is immutable) is skipped along with its
+	// endpoints so the others still converge. Its error is still returned,
+	// so the reconcile is requeued and counted as failed. Never join a
+	// reconcile.TerminalError here: errors.Is finds it through the join
+	// and would suppress the requeue for every service.
+	svcs, svcErr := r.applyServices(ctx)
 
-	slices := endpoints.BuildEndpointSlices(nodesByService, r.Config)
+	slices := ownedBy(endpoints.BuildEndpointSlices(nodesByService, r.Config), svcs)
 	if err := r.ownEndpointSlices(slices, svcs); err != nil {
-		return ctrl.Result{}, err
+		return ctrl.Result{}, errors.Join(svcErr, err)
 	}
-	if err := r.applyEndpointSlices(ctx, slices); err != nil {
-		return ctrl.Result{}, err
-	}
+	sliceErr := r.applyEndpointSlices(ctx, slices)
 
-	slicesCount := len(slices)
 	epsCount := 0
+	var epsErr error
 	if r.Config.WriteLegacyEndpoints {
-		eps := endpoints.BuildEndpoints(nodesByService, r.Config) //nolint:staticcheck // SA1019: intentional legacy support for Kubernetes <1.33
+		eps := ownedBy(endpoints.BuildEndpoints(nodesByService, r.Config), svcs) //nolint:staticcheck // SA1019: intentional legacy support for Kubernetes <1.33
 		if err := r.ownEndpoints(eps, svcs); err != nil {
-			return ctrl.Result{}, err
+			return ctrl.Result{}, errors.Join(svcErr, sliceErr, err)
 		}
-		if err := r.applyLegacyEndpoints(ctx, eps); err != nil {
-			return ctrl.Result{}, err
-		}
+		epsErr = r.applyLegacyEndpoints(ctx, eps)
 		epsCount = len(eps)
 	}
 
-	logger.V(1).Info("reconciled endpoints", "endpointSlices", slicesCount, "legacyEndpoints", epsCount)
+	if err := errors.Join(svcErr, sliceErr, epsErr); err != nil {
+		return ctrl.Result{}, err
+	}
+	logger.V(1).Info("reconciled endpoints", "endpointSlices", len(slices), "legacyEndpoints", epsCount)
 	return ctrl.Result{}, nil
 }
 
@@ -118,15 +121,18 @@ func ListNodesByService(ctx context.Context, c client.Client, cfg config.Config)
 }
 
 // applyAll creates/updates each of want via CreateOrUpdate, applying mutate
-// to copy the type-specific fields callers care about, and returns the
-// applied objects (with server-populated fields such as UID/
-// ResourceVersion) in the same order. kind names the object kind in a
-// wrapped error, since typed clients don't populate GroupVersionKind.
+// to copy the type-specific fields callers care about. A failed object
+// doesn't stop the rest: the result holds only the successfully applied
+// objects (with server-populated fields such as UID/ResourceVersion), in
+// want order, and the error joins one wrapped error per failure. kind
+// names the object kind in those errors, since typed clients don't
+// populate GroupVersionKind.
 func applyAll[T any, PT interface {
 	*T
 	client.Object
 }](ctx context.Context, c client.Client, want []T, kind string, mutate func(got, desired PT)) ([]T, error) {
-	applied := make([]T, len(want))
+	applied := make([]T, 0, len(want))
+	var errs []error
 	for i := range want {
 		desired := PT(&want[i])
 		got := new(T)
@@ -138,11 +144,28 @@ func applyAll[T any, PT interface {
 			mutate(gotPT, desired)
 			return nil
 		}); err != nil {
-			return nil, fmt.Errorf("applying %s %s/%s: %w", kind, desired.GetNamespace(), desired.GetName(), err)
+			errs = append(errs, fmt.Errorf("applying %s %s/%s: %w", kind, desired.GetNamespace(), desired.GetName(), err))
+			continue
 		}
-		applied[i] = *got
+		applied = append(applied, *got)
 	}
-	return applied, nil
+	return applied, errors.Join(errs...)
+}
+
+// ownedBy drops objects whose service-name label has no applied Service,
+// so endpoints for a Service this controller couldn't apply are never
+// written against whatever object holds that name.
+func ownedBy[T any, PT interface {
+	*T
+	client.Object
+}](objs []T, svcs map[string]corev1.Service) []T {
+	kept := objs[:0]
+	for i := range objs {
+		if _, ok := svcs[PT(&objs[i]).GetLabels()[discoveryv1.LabelServiceName]]; ok {
+			kept = append(kept, objs[i])
+		}
+	}
+	return kept
 }
 
 // ownAll sets a controller OwnerReference from each of objs to its matching
@@ -167,8 +190,9 @@ func ownAll[T any, PT interface {
 }
 
 // applyServices creates/updates the selector-less Service per
-// config.Service, returning each by name so callers can own EndpointSlice/
-// Endpoints against it.
+// config.Service, returning the successfully applied ones by name so
+// callers can own EndpointSlice/Endpoints against them, plus the joined
+// error for any that failed.
 func (r *NodeReconciler) applyServices(ctx context.Context) (map[string]corev1.Service, error) {
 	want := endpoints.BuildServices(r.Config)
 	applied, err := applyAll(ctx, r.Client, want, "service", func(got, desired *corev1.Service) {
@@ -177,14 +201,11 @@ func (r *NodeReconciler) applyServices(ctx context.Context) (map[string]corev1.S
 		got.Spec.Selector = desired.Spec.Selector
 		got.Spec.ClusterIP = corev1.ClusterIPNone
 	})
-	if err != nil {
-		return nil, err
-	}
 	svcs := make(map[string]corev1.Service, len(applied))
 	for _, svc := range applied {
 		svcs[svc.Name] = svc
 	}
-	return svcs, nil
+	return svcs, err
 }
 
 // ownEndpointSlices sets a controller OwnerReference from each slice to its
