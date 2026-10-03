@@ -123,12 +123,12 @@ func TestReconcile_NodeSelectorExcludesNonMatchingNodes(t *testing.T) {
 	}
 }
 
-// TestReconcile_NoMatchingNodes_NoEndpointSliceCreated also proves the
-// Services themselves are NOT gated on any node currently matching the
-// selector: applyServices runs unconditionally, since a ServiceMonitor
-// targets the Service independent of whether a control-plane node happens
-// to be present right now.
-func TestReconcile_NoMatchingNodes_NoEndpointSliceCreated(t *testing.T) {
+// TestReconcile_NoMatchingNodes_CreatesEmptyEndpointSlices proves a
+// service with no matching nodes still gets its Service and an empty IPv4
+// EndpointSlice (the real API server accepts endpoints: []), and never an
+// -ipv6 one. The Service matters because a ServiceMonitor targets it
+// independent of whether a control-plane node happens to be present.
+func TestReconcile_NoMatchingNodes_CreatesEmptyEndpointSlices(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), reconcileTimeout)
 	defer cancel()
 
@@ -137,19 +137,24 @@ func TestReconcile_NoMatchingNodes_NoEndpointSliceCreated(t *testing.T) {
 	// A node exists, but none carry the selector label.
 	createNode(t, ctx, "worker-"+id, "10.5.0.1", true)
 
-	cfg := config.Config{
-		Namespace:    testNamespace,
-		NodeSelector: cpLabel,
-		Services:     config.DefaultServices,
-	}
+	cfg := threeServiceConfig(id, cpLabel)
 	reconcile(t, ctx, cfg)
 
-	if err := getEndpointSliceErr(ctx, "kube-scheduler-metrics"); !isNotFound(err) {
-		t.Fatalf("expected no EndpointSlice to be created, got err=%v", err)
-	}
-
-	for _, svc := range config.DefaultServices {
-		_ = getService(t, ctx, svc.Name) // must exist despite zero matching nodes
+	for _, svc := range cfg.Services {
+		owner := getService(t, ctx, svc.Name) // must exist despite zero matching nodes
+		es := getEndpointSlice(t, ctx, svc.Name+"-metrics")
+		if len(es.Endpoints) != 0 {
+			t.Errorf("%s: expected an empty EndpointSlice, got %+v", es.Name, es.Endpoints)
+		}
+		if es.AddressType != discoveryv1.AddressTypeIPv4 {
+			t.Errorf("%s: expected the empty slice to be IPv4, got %v", es.Name, es.AddressType)
+		}
+		if ref := ownerRefTo(t, es.OwnerReferences, owner); ref.UID != owner.UID {
+			t.Errorf("%s: expected ownerRef UID %s, got %s", es.Name, owner.UID, ref.UID)
+		}
+		if err := getEndpointSliceErr(ctx, svc.Name+"-metrics-ipv6"); !isNotFound(err) {
+			t.Errorf("%s: expected no -ipv6 slice without IPv6 nodes, got err=%v", svc.Name, err)
+		}
 	}
 }
 
@@ -279,10 +284,24 @@ func TestReconcile_KubeProxyIncludesAgentNodes_ControlPlaneServicesDoNot(t *test
 	}
 	reconcile(t, ctx, cfg)
 
+	// kube-proxy's empty selector matches every Node in the shared envtest
+	// API server, so compare against the live node count rather than a
+	// literal 2, which would depend on other tests' cleanup having run.
+	var allNodes corev1.NodeList
+	if err := k8sClient.List(ctx, &allNodes); err != nil {
+		t.Fatalf("listing nodes: %v", err)
+	}
 	proxy := getEndpointSlice(t, ctx, "kube-proxy-metrics")
-	if len(proxy.Endpoints) != 2 {
-		t.Fatalf("expected kube-proxy-metrics to include both the control-plane and agent node, got %d endpoints: %+v",
-			len(proxy.Endpoints), proxy.Endpoints)
+	if len(proxy.Endpoints) != len(allNodes.Items) {
+		t.Fatalf("expected kube-proxy-metrics to include every node (%d), got %d endpoints: %+v",
+			len(allNodes.Items), len(proxy.Endpoints), proxy.Endpoints)
+	}
+	seen := map[string]bool{}
+	for _, ep := range proxy.Endpoints {
+		seen[*ep.NodeName] = true
+	}
+	if !seen["cp-"+id] || !seen["agent-"+id] {
+		t.Fatalf("expected kube-proxy-metrics to include both cp-%s and agent-%s, got %v", id, id, seen)
 	}
 
 	sched := getEndpointSlice(t, ctx, "kube-scheduler-metrics")

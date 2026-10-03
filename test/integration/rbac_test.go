@@ -28,7 +28,7 @@ import (
 // --- loading the actual shipped manifests ---------------------------------
 //
 // These tests parse deploy/standard's real RBAC YAML from disk rather than
-// re-declaring the rules in Go, so a Surgeon edit to the shipped manifest is
+// re-declaring the rules in Go, so an edit to the shipped manifest is
 // exercised here automatically instead of silently diverging from a copy.
 
 func repoRoot(t *testing.T) string {
@@ -342,8 +342,8 @@ func TestRBAC_MissingServicesVerb_ReconcileFailsForbidden(t *testing.T) {
 	role := &rbacv1.Role{
 		Name: roleName, Namespace: "kube-system",
 		Rules: []rbacv1.PolicyRule{
-			{APIGroups: []string{"discovery.k8s.io"}, Resources: []string{"endpointslices"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch"}},
-			{APIGroups: []string{""}, Resources: []string{"endpoints"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch"}},
+			{APIGroups: []string{"discovery.k8s.io"}, Resources: []string{"endpointslices"}, Verbs: []string{"get", "list", "watch", "create", "update", "delete"}},
+			{APIGroups: []string{""}, Resources: []string{"endpoints"}, Verbs: []string{"get", "list", "watch", "create", "update"}},
 		},
 	}
 	if err := k8sClient.Create(ctx, role); err != nil {
@@ -438,7 +438,7 @@ func TestRBAC_MissingEndpointSlicesVerb_ReconcileFailsForbidden(t *testing.T) {
 	role := &rbacv1.Role{
 		Name: roleName, Namespace: "kube-system",
 		Rules: []rbacv1.PolicyRule{
-			{APIGroups: []string{""}, Resources: []string{"endpoints", "services"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch"}},
+			{APIGroups: []string{""}, Resources: []string{"endpoints", "services"}, Verbs: []string{"get", "list", "watch", "create", "update"}},
 		},
 	}
 	if err := k8sClient.Create(ctx, role); err != nil {
@@ -531,8 +531,8 @@ func TestRBAC_MissingEndpointsVerb_ReconcileFailsForbidden(t *testing.T) {
 	role := &rbacv1.Role{
 		Name: roleName, Namespace: "kube-system",
 		Rules: []rbacv1.PolicyRule{
-			{APIGroups: []string{"discovery.k8s.io"}, Resources: []string{"endpointslices"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch"}},
-			{APIGroups: []string{""}, Resources: []string{"services"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch"}},
+			{APIGroups: []string{"discovery.k8s.io"}, Resources: []string{"endpointslices"}, Verbs: []string{"get", "list", "watch", "create", "update", "delete"}},
+			{APIGroups: []string{""}, Resources: []string{"services"}, Verbs: []string{"get", "list", "watch", "create", "update"}},
 		},
 	}
 	if err := k8sClient.Create(ctx, role); err != nil {
@@ -681,5 +681,160 @@ func TestRBAC_MissingEventsOnLeaderElection_RecordEventFailsForbidden(t *testing
 	}
 	if !apierrors.IsForbidden(err) {
 		t.Fatalf("expected a Forbidden error, got: %v", err)
+	}
+}
+
+// --- prune: the delete verb on endpointslices ---------------------------
+//
+// pruneEndpointSlices (node_controller.go) is the only caller of delete,
+// and only has something to delete once a managed slice goes stale (the
+// -ipv6 one after the last IPv6 node leaves). So the verb must be
+// load-bearing exactly then, and nowhere else.
+
+// bindRestrictedSA creates a ServiceAccount in monitoring bound to the
+// shipped-shape node ClusterRole in full, plus a kube-system Role with
+// rules, returning the SA's impersonated client.
+func bindRestrictedSA(t *testing.T, ctx context.Context, id, saName string, rules []rbacv1.PolicyRule) client.Client {
+	t.Helper()
+	sa := &corev1.ServiceAccount{Name: saName, Namespace: "monitoring"}
+	if err := k8sClient.Create(ctx, sa); err != nil {
+		t.Fatalf("creating service account: %v", err)
+	}
+	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), sa) })
+
+	cr := &rbacv1.ClusterRole{
+		Name: "nodes-full-" + id,
+		Rules: []rbacv1.PolicyRule{
+			{APIGroups: []string{""}, Resources: []string{"nodes"}, Verbs: []string{"get", "list", "watch"}},
+		},
+	}
+	if err := k8sClient.Create(ctx, cr); err != nil {
+		t.Fatalf("creating cluster role: %v", err)
+	}
+	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), cr) })
+	crb := &rbacv1.ClusterRoleBinding{
+		Name:     cr.Name,
+		RoleRef:  rbacv1.RoleRef{APIGroup: "rbac.authorization.k8s.io", Kind: "ClusterRole", Name: cr.Name},
+		Subjects: []rbacv1.Subject{{Kind: "ServiceAccount", Name: saName, Namespace: "monitoring"}},
+	}
+	if err := k8sClient.Create(ctx, crb); err != nil {
+		t.Fatalf("creating cluster role binding: %v", err)
+	}
+	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), crb) })
+
+	role := &rbacv1.Role{Name: saName, Namespace: "kube-system", Rules: rules}
+	if err := k8sClient.Create(ctx, role); err != nil {
+		t.Fatalf("creating role: %v", err)
+	}
+	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), role) })
+	rb := &rbacv1.RoleBinding{
+		Name: saName, Namespace: "kube-system",
+		RoleRef:  rbacv1.RoleRef{APIGroup: "rbac.authorization.k8s.io", Kind: "Role", Name: role.Name},
+		Subjects: []rbacv1.Subject{{Kind: "ServiceAccount", Name: saName, Namespace: "monitoring"}},
+	}
+	if err := k8sClient.Create(ctx, rb); err != nil {
+		t.Fatalf("creating role binding: %v", err)
+	}
+	t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), rb) })
+
+	userName, groups := saUser("monitoring", saName)
+	return impersonatedClient(t, userName, groups...)
+}
+
+func TestRBAC_ShippedManifest_PruneSucceeds(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), reconcileTimeout)
+	defer cancel()
+
+	applyShippedRBAC(t, ctx)
+
+	id := testID(t)
+	cpLabel := map[string]string{"role-" + id: "control-plane"}
+	createNode(t, ctx, "v4-"+id, "10.26.0.1", true, withExtraLabels(cpLabel))
+	createNode(t, ctx, "v6-"+id, "2001:db8::26:0:1", true, withExtraLabels(cpLabel))
+
+	userName, groups := saUser("monitoring", "k3s-prometheus-metrics")
+	r := &controller.NodeReconciler{
+		Client: impersonatedClient(t, userName, groups...),
+		Config: config.Config{
+			Namespace:    "kube-system",
+			NodeSelector: cpLabel,
+			Services: []config.Service{
+				{Name: id, PortName: "metrics", Port: 9999, Protocol: corev1.ProtocolTCP, AppProtocol: "http"},
+			},
+		},
+	}
+	if _, err := r.Reconcile(ctx, ctrl.Request{}); err != nil {
+		t.Fatalf("setup: reconcile under shipped RBAC: %v", err)
+	}
+	_ = getEndpointSliceIn(t, ctx, "kube-system", id+"-metrics")
+	_ = getEndpointSliceIn(t, ctx, "kube-system", id+"-metrics-ipv6")
+
+	deleteNode(t, ctx, "v6-"+id)
+	if _, err := r.Reconcile(ctx, ctrl.Request{}); err != nil {
+		t.Fatalf("expected prune to succeed under the shipped RBAC manifest, got: %v", err)
+	}
+	if err := getEndpointSliceErrIn(ctx, "kube-system", id+"-metrics-ipv6"); !isNotFound(err) {
+		t.Fatalf("expected the -ipv6 slice pruned, got err=%v", err)
+	}
+}
+
+// TestRBAC_MissingDeleteOnEndpointSlices_PruneFailsForbiddenOnlyWhenStale
+// proves the delete verb is load-bearing for prune and only for prune:
+// with everything else granted as shipped, reconcile still succeeds while
+// nothing is stale, and fails Forbidden the moment something is -- with
+// the rest of that reconcile's writes already done.
+func TestRBAC_MissingDeleteOnEndpointSlices_PruneFailsForbiddenOnlyWhenStale(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), reconcileTimeout)
+	defer cancel()
+
+	applyShippedRBAC(t, ctx)
+
+	id := testID(t)
+	// Same as role-endpoints.yaml, minus delete on endpointslices.
+	restricted := bindRestrictedSA(t, ctx, id, "sa-no-delete-"+id, []rbacv1.PolicyRule{
+		{APIGroups: []string{"discovery.k8s.io"}, Resources: []string{"endpointslices"}, Verbs: []string{"get", "list", "watch", "create", "update"}},
+		{APIGroups: []string{""}, Resources: []string{"endpoints", "services"}, Verbs: []string{"get", "list", "watch", "create", "update"}},
+	})
+
+	cpLabel := map[string]string{"role-" + id: "control-plane"}
+	createNode(t, ctx, "v4-"+id, "10.27.0.1", true, withExtraLabels(cpLabel))
+	createNode(t, ctx, "v6-"+id, "2001:db8::27:0:1", true, withExtraLabels(cpLabel))
+
+	r := &controller.NodeReconciler{
+		Client: restricted,
+		Config: config.Config{
+			Namespace:    "kube-system",
+			NodeSelector: cpLabel,
+			Services: []config.Service{
+				{Name: id, PortName: "metrics", Port: 9999, Protocol: corev1.ProtocolTCP, AppProtocol: "http"},
+			},
+		},
+	}
+	if _, err := r.Reconcile(ctx, ctrl.Request{}); err != nil {
+		t.Fatalf("expected reconcile to succeed without delete while nothing is stale, got: %v", err)
+	}
+	if _, err := r.Reconcile(ctx, ctrl.Request{}); err != nil {
+		t.Fatalf("expected a converged reconcile to succeed without delete, got: %v", err)
+	}
+	_ = getEndpointSliceIn(t, ctx, "kube-system", id+"-metrics")
+	_ = getEndpointSliceIn(t, ctx, "kube-system", id+"-metrics-ipv6")
+
+	createNode(t, ctx, "v4b-"+id, "10.27.0.2", true, withExtraLabels(cpLabel))
+	deleteNode(t, ctx, "v6-"+id)
+	_, err := r.Reconcile(ctx, ctrl.Request{})
+	if err == nil {
+		t.Fatal("expected reconcile to fail once a stale -ipv6 slice needs deleting without the delete verb")
+	}
+	if !apierrors.IsForbidden(err) {
+		t.Fatalf("expected a Forbidden error, got: %v", err)
+	}
+
+	// Isolation: the IPv4 slice update ran before prune and must have landed.
+	v4 := getEndpointSliceIn(t, ctx, "kube-system", id+"-metrics")
+	if len(v4.Endpoints) != 2 {
+		t.Errorf("expected the IPv4 slice updated to 2 endpoints despite the prune failure, got %+v", v4.Endpoints)
+	}
+	if err := getEndpointSliceErrIn(ctx, "kube-system", id+"-metrics-ipv6"); err != nil {
+		t.Errorf("expected the stale -ipv6 slice still present (delete was forbidden), got err=%v", err)
 	}
 }

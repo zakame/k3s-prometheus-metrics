@@ -26,8 +26,10 @@ const testNamespace = "default"
 var nonDNSLabel = regexp.MustCompile(`[^a-z0-9-]+`)
 
 // testID turns a *testing.T name into a short, unique, DNS-1123-safe token
-// used to namespace Node/Service names so parallel test cases sharing one
-// envtest API server never collide.
+// used to namespace Node/Service names so test cases sharing one envtest
+// API server never collide. Tests still must not run in parallel: a
+// reconcile prunes every managed EndpointSlice in the namespace that its
+// own config doesn't produce, so each test cleans up before the next.
 func testID(t *testing.T) string {
 	t.Helper()
 	s := strings.ToLower(t.Name())
@@ -96,6 +98,45 @@ func setNodeReady(t *testing.T, ctx context.Context, name string, ready bool) {
 	n.Status.Conditions = []corev1.NodeCondition{{Type: corev1.NodeReady, Status: status}}
 	if err := k8sClient.Status().Update(ctx, &n); err != nil {
 		t.Fatalf("updating readiness on node %s: %v", name, err)
+	}
+}
+
+// setNodeInternalIP replaces the node's InternalIP address, as a node
+// re-registering on a new network would, leaving readiness alone.
+func setNodeInternalIP(t *testing.T, ctx context.Context, name, internalIP string) {
+	t.Helper()
+	var n corev1.Node
+	if err := k8sClient.Get(ctx, types.NamespacedName{Name: name}, &n); err != nil {
+		t.Fatalf("getting node %s: %v", name, err)
+	}
+	n.Status.Addresses = []corev1.NodeAddress{{Type: corev1.NodeInternalIP, Address: internalIP}}
+	if err := k8sClient.Status().Update(ctx, &n); err != nil {
+		t.Fatalf("updating InternalIP on node %s: %v", name, err)
+	}
+}
+
+// waitFor polls cond until it reports done, failing the test with desc on
+// error or at reconcileTimeout. For manager-driven tests, where the
+// watch/reconcile loop runs asynchronously.
+func waitFor(t *testing.T, ctx context.Context, desc string, cond func() (bool, error)) {
+	t.Helper()
+	deadline := time.Now().Add(reconcileTimeout)
+	for {
+		done, err := cond()
+		if err != nil {
+			t.Fatalf("%s: %v", desc, err)
+		}
+		if done {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", desc)
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("context done waiting for %s: %v", desc, ctx.Err())
+		case <-time.After(50 * time.Millisecond):
+		}
 	}
 }
 

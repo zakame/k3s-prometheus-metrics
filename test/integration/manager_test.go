@@ -5,7 +5,6 @@ package integration
 import (
 	"context"
 	"testing"
-	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
@@ -24,16 +23,90 @@ import (
 // access -- kube-system, matching the shipped default --namespace.
 const rbacNamespace = "kube-system"
 
+// startManager runs a real manager with NodeReconciler wired in through
+// SetupWithManager (so the real watches, predicates, and event mapping
+// drive Reconcile), returning once its cache has synced. The Cache option
+// mirrors cmd/k3s-prometheus-metrics's production wiring: Service and
+// EndpointSlice watches scoped to cfg.Namespace.
+//
+// Its cleanup stops the manager and then sweeps cfg's managed objects,
+// since a reconcile racing the other cleanups could otherwise recreate
+// them after they were deleted.
+func startManager(t *testing.T, ctx context.Context, restCfg *rest.Config, cfg config.Config) ctrl.Manager {
+	t.Helper()
+	ctx, cancel := context.WithCancel(ctx)
+
+	mgr, err := ctrl.NewManager(restCfg, ctrl.Options{
+		Scheme:                 testScheme,
+		Metrics:                metricsserver.Options{BindAddress: "0"},
+		HealthProbeBindAddress: "0",
+		// Controller names are validated process-wide, not per-manager;
+		// avoids collisions with other manager tests in this binary.
+		// Test-only, production wants the collision protection.
+		Controller: ctrlconfig.Controller{SkipNameValidation: new(true)},
+		Cache: cache.Options{
+			ByObject: map[client.Object]cache.ByObject{
+				&corev1.Service{}:            {Namespaces: map[string]cache.Config{cfg.Namespace: {}}},
+				&discoveryv1.EndpointSlice{}: {Namespaces: map[string]cache.Config{cfg.Namespace: {}}},
+			},
+		},
+	})
+	if err != nil {
+		cancel()
+		t.Fatalf("creating manager: %v", err)
+	}
+
+	r := &controller.NodeReconciler{Client: mgr.GetClient(), Config: cfg}
+	if err := r.SetupWithManager(mgr); err != nil {
+		cancel()
+		t.Fatalf("SetupWithManager: %v", err)
+	}
+
+	mgrDone := make(chan error, 1)
+	go func() { mgrDone <- mgr.Start(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		<-mgrDone
+		for _, svc := range cfg.Services {
+			_ = k8sClient.Delete(context.Background(), &discoveryv1.EndpointSlice{Name: svc.Name + "-metrics", Namespace: cfg.Namespace})
+			_ = k8sClient.Delete(context.Background(), &discoveryv1.EndpointSlice{Name: svc.Name + "-metrics-ipv6", Namespace: cfg.Namespace})
+			_ = k8sClient.Delete(context.Background(), &corev1.Endpoints{Name: svc.Name, Namespace: cfg.Namespace}) //nolint:staticcheck
+			_ = k8sClient.Delete(context.Background(), &corev1.Service{Name: svc.Name, Namespace: cfg.Namespace})
+		}
+	})
+
+	if !mgr.GetCache().WaitForCacheSync(ctx) {
+		t.Fatal("manager cache never synced")
+	}
+	return mgr
+}
+
+// waitForSlice polls until the named EndpointSlice exists and ok accepts
+// it, returning the accepted object.
+func waitForSlice(t *testing.T, ctx context.Context, namespace, name string, ok func(*discoveryv1.EndpointSlice) bool) *discoveryv1.EndpointSlice {
+	t.Helper()
+	var got discoveryv1.EndpointSlice
+	waitFor(t, ctx, "EndpointSlice "+namespace+"/"+name, func() (bool, error) {
+		err := k8sClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, &got)
+		if isNotFound(err) {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		return ok(&got), nil
+	})
+	return &got
+}
+
 // TestManager_ImpersonatedShippedRBAC_DrivesEndpointSliceViaWatch starts a
 // real manager, authenticated as the impersonated shipped ServiceAccount
 // under the real deploy/standard RBAC, with the real k3s control-plane
 // label. An admin-privileged manager test can't see an RBAC-scope
 // mismatch between the cache's default cluster-wide watch and a
 // namespace-scoped Role -- exactly the bug that reached a real cluster.
-// The Cache option mirrors cmd/k3s-prometheus-metrics's production wiring.
 func TestManager_ImpersonatedShippedRBAC_DrivesEndpointSliceViaWatch(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	applyShippedRBAC(t, ctx)
 
@@ -44,71 +117,19 @@ func TestManager_ImpersonatedShippedRBAC_DrivesEndpointSliceViaWatch(t *testing.
 	userName, groups := saUser("monitoring", "k3s-prometheus-metrics")
 	restCfg.Impersonate = rest.ImpersonationConfig{UserName: userName, Groups: groups}
 
-	mgr, err := ctrl.NewManager(restCfg, ctrl.Options{
-		Scheme:                 testScheme,
-		Metrics:                metricsserver.Options{BindAddress: "0"},
-		HealthProbeBindAddress: "0",
-		// Controller names are validated process-wide, not per-manager;
-		// avoids collisions with other manager tests in this binary.
-		// Test-only, production wants the collision protection.
-		Controller: ctrlconfig.Controller{SkipNameValidation: new(true)},
-		// Mirrors cmd/k3s-prometheus-metrics's production Cache scoping.
-		Cache: cache.Options{
-			ByObject: map[client.Object]cache.ByObject{
-				&corev1.Service{}:            {Namespaces: map[string]cache.Config{rbacNamespace: {}}},
-				&discoveryv1.EndpointSlice{}: {Namespaces: map[string]cache.Config{rbacNamespace: {}}},
-			},
+	startManager(t, ctx, restCfg, config.Config{
+		Namespace:    rbacNamespace,
+		NodeSelector: cpLabel,
+		Services: []config.Service{
+			{Name: id, PortName: "metrics", Port: 9999, Protocol: corev1.ProtocolTCP, AppProtocol: "http"},
 		},
 	})
-	if err != nil {
-		t.Fatalf("creating manager: %v", err)
-	}
-
-	r := &controller.NodeReconciler{
-		Client: mgr.GetClient(),
-		Config: config.Config{
-			Namespace:    rbacNamespace,
-			NodeSelector: cpLabel,
-			Services: []config.Service{
-				{Name: id, PortName: "metrics", Port: 9999, Protocol: corev1.ProtocolTCP, AppProtocol: "http"},
-			},
-		},
-	}
-	if err := r.SetupWithManager(mgr); err != nil {
-		t.Fatalf("SetupWithManager: %v", err)
-	}
-
-	mgrDone := make(chan error, 1)
-	go func() { mgrDone <- mgr.Start(ctx) }()
-	t.Cleanup(func() {
-		cancel()
-		<-mgrDone
-	})
-
-	if !mgr.GetCache().WaitForCacheSync(ctx) {
-		t.Fatal("manager cache never synced")
-	}
 
 	createNode(t, ctx, "cp-"+id, "10.31.0.1", true, withExtraLabels(cpLabel))
 
-	name := id + "-metrics"
-	deadline := time.Now().Add(reconcileTimeout)
-	for {
-		if err := getEndpointSliceErrIn(ctx, rbacNamespace, name); err == nil {
-			break
-		} else if !isNotFound(err) {
-			t.Fatalf("getting EndpointSlice %s/%s: %v", rbacNamespace, name, err)
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("timed out waiting for the manager-driven watch/reconcile to create EndpointSlice %s/%s under the impersonated shipped ServiceAccount", rbacNamespace, name)
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-
-	es := getEndpointSliceIn(t, ctx, rbacNamespace, name)
-	if len(es.Endpoints) != 1 {
-		t.Fatalf("expected 1 endpoint, got %d: %+v", len(es.Endpoints), es.Endpoints)
-	}
+	es := waitForSlice(t, ctx, rbacNamespace, id+"-metrics", func(es *discoveryv1.EndpointSlice) bool {
+		return len(es.Endpoints) == 1
+	})
 	if *es.Endpoints[0].NodeName != "cp-"+id {
 		t.Fatalf("expected endpoint for cp-%s, got %s", id, *es.Endpoints[0].NodeName)
 	}
