@@ -168,9 +168,12 @@ The controller needs a `ServiceAccount` with permission to list/watch
 Nodes and create/update Services and EndpointSlices (and, if
 `--write-legacy-endpoints` is set, Endpoints). See [Kubernetes
 Deployment](#kubernetes-deployment) below for the RBAC this requires. Once
-running, it reconciles continuously. No scheduling flag is needed to make
-it re-check node state periodically, since it watches Node objects
-directly.
+running, it reconciles continuously: on Node changes that matter
+(readiness, schedulability, labels, InternalIP addresses), on any change
+to the Services and EndpointSlices it manages, and every 10 minutes as a
+safety net. A managed Service or EndpointSlice someone deletes or edits by
+hand is repaired on the next pass; legacy Endpoints aren't watched, so
+they wait for the 10-minute pass or a node change.
 
 ### CLI Flags
 
@@ -240,12 +243,13 @@ project's `K3S_PROMETHEUS_METRICS_*` fallback above.
 `127.0.0.1`/`localhost`, which means "the container" from inside it, not
 your host.
 
-Since it doesn't set `ownerReferences` (there's no live Service to own them
-against yet), re-running and re-applying won't clean up a service whose
-node set has dropped to zero. Prune by label instead. Service and (legacy)
-Endpoints carry `app.kubernetes.io/managed-by`. EndpointSlice carries a
-different label, `endpointslice.kubernetes.io/managed-by`. Pruning both
-kinds takes two commands:
+Re-running and re-applying does empty a service's EndpointSlice once its
+node set drops to zero, since the output always includes that slice. It
+can't remove an object the output no longer contains, such as a `-ipv6`
+slice after the last IPv6 node left. Prune by label for that. Service and
+(legacy) Endpoints carry `app.kubernetes.io/managed-by`. EndpointSlice
+carries a different label, `endpointslice.kubernetes.io/managed-by`.
+Pruning both kinds takes two commands:
 
 ```bash
 kubectl apply -f manifests.yaml --prune -l app.kubernetes.io/managed-by=k3s-prometheus-metrics \
@@ -405,9 +409,12 @@ kubectl get endpointslices -n kube-system -l endpointslice.kubernetes.io/managed
 ```
 
 should list one EndpointSlice per service (`kube-scheduler-metrics`,
-`kube-controller-manager-metrics`, `kube-proxy-metrics`). Each has one
-endpoint address per matching node -- control-plane nodes only for
-kube-scheduler/kube-controller-manager, every node for kube-proxy.
+`kube-controller-manager-metrics`, `kube-proxy-metrics`), plus a
+`-ipv6` sibling for each service with IPv6 nodes. Each has one endpoint
+address per matching node -- control-plane nodes only for
+kube-scheduler/kube-controller-manager, every node for kube-proxy. A
+service with no matching nodes keeps an empty slice rather than a stale
+one; the `-ipv6` slice is deleted once no IPv6 node remains.
 
 From there, check
 Prometheus's own **Status → Targets** page for the `kube-scheduler`,

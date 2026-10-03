@@ -25,13 +25,15 @@ const (
 
 // BuildEndpointSlices turns nodesByService (keyed by service name) into
 // EndpointSlice objects in cfg.Namespace: one per (service, address
-// family) pair, since AddressType can't mix IPv4/IPv6.
+// family) pair, since AddressType can't mix IPv4/IPv6. The IPv4 slice is
+// always emitted, empty if need be, so a service whose nodes all left
+// stops advertising them; the IPv6 one only exists while IPv6 nodes do.
 func BuildEndpointSlices(nodesByService map[string][]corev1.Node, cfg config.Config) []discoveryv1.EndpointSlice {
 	var slices []discoveryv1.EndpointSlice
 	for _, svc := range cfg.Services {
 		byFamily := endpointsFromNodes(nodesByService[svc.Name])
-		if len(byFamily) == 0 {
-			continue
+		if byFamily[discoveryv1.AddressTypeIPv4] == nil {
+			byFamily[discoveryv1.AddressTypeIPv4] = []discoveryv1.Endpoint{}
 		}
 
 		families := make([]discoveryv1.AddressType, 0, len(byFamily))

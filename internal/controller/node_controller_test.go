@@ -114,3 +114,87 @@ func TestNodeChangedPredicate_UpdateWithWrongObjectType_LetsThrough(t *testing.T
 		t.Fatal("expected a non-Node object pair to fail open (let the update through)")
 	}
 }
+
+// --- InternalIP changes -------------------------------------------------
+// Reconcile copies each node's InternalIP into the EndpointSlice, so an
+// address change must trigger a reconcile even when readiness, labels,
+// and schedulability are all unchanged.
+
+func withAddresses(n *corev1.Node, addrs ...corev1.NodeAddress) *corev1.Node {
+	n.Status.Addresses = addrs
+	return n
+}
+
+func internalIP(ip string) corev1.NodeAddress {
+	return corev1.NodeAddress{Type: corev1.NodeInternalIP, Address: ip}
+}
+
+func externalIP(ip string) corev1.NodeAddress {
+	return corev1.NodeAddress{Type: corev1.NodeExternalIP, Address: ip}
+}
+
+func TestNodeChangedPredicate_UpdateLetsThroughWhenInternalIPAppears(t *testing.T) {
+	old := baseNode("n1")
+	newNode := withAddresses(baseNode("n1"), internalIP("10.0.0.1"))
+	if !nodeChangedPredicate.Update(event.UpdateEvent{ObjectOld: old, ObjectNew: newNode}) {
+		t.Fatal("expected an InternalIP first appearing to trigger reconcile")
+	}
+}
+
+func TestNodeChangedPredicate_UpdateLetsThroughWhenInternalIPRemoved(t *testing.T) {
+	old := withAddresses(baseNode("n1"), internalIP("10.0.0.1"))
+	newNode := baseNode("n1")
+	if !nodeChangedPredicate.Update(event.UpdateEvent{ObjectOld: old, ObjectNew: newNode}) {
+		t.Fatal("expected an InternalIP disappearing to trigger reconcile")
+	}
+}
+
+func TestNodeChangedPredicate_UpdateLetsThroughWhenInternalIPChanges(t *testing.T) {
+	old := withAddresses(baseNode("n1"), internalIP("10.0.0.1"))
+	newNode := withAddresses(baseNode("n1"), internalIP("10.0.0.2"))
+	if !nodeChangedPredicate.Update(event.UpdateEvent{ObjectOld: old, ObjectNew: newNode}) {
+		t.Fatal("expected an InternalIP change to trigger reconcile")
+	}
+}
+
+func TestNodeChangedPredicate_UpdateLetsThroughWhenSecondInternalIPAdded(t *testing.T) {
+	old := withAddresses(baseNode("n1"), internalIP("10.0.0.1"))
+	newNode := withAddresses(baseNode("n1"), internalIP("10.0.0.1"), internalIP("2001:db8::1"))
+	if !nodeChangedPredicate.Update(event.UpdateEvent{ObjectOld: old, ObjectNew: newNode}) {
+		t.Fatal("expected a node gaining a second (IPv6) InternalIP to trigger reconcile")
+	}
+}
+
+func TestNodeChangedPredicate_UpdateIgnoresInternalIPReorder(t *testing.T) {
+	old := withAddresses(baseNode("n1"), internalIP("10.0.0.1"), internalIP("2001:db8::1"))
+	newNode := withAddresses(baseNode("n1"), internalIP("2001:db8::1"), internalIP("10.0.0.1"))
+	if nodeChangedPredicate.Update(event.UpdateEvent{ObjectOld: old, ObjectNew: newNode}) {
+		t.Fatal("expected the same InternalIP set in a different order to be filtered out")
+	}
+}
+
+func TestNodeChangedPredicate_UpdateIgnoresExternalIPOnlyChange(t *testing.T) {
+	old := withAddresses(baseNode("n1"), internalIP("10.0.0.1"), externalIP("203.0.113.1"))
+	newNode := withAddresses(baseNode("n1"), internalIP("10.0.0.1"), externalIP("203.0.113.2"))
+	if nodeChangedPredicate.Update(event.UpdateEvent{ObjectOld: old, ObjectNew: newNode}) {
+		t.Fatal("expected an ExternalIP-only change to be filtered out (never written to the slice)")
+	}
+}
+
+func TestNodeChangedPredicate_UpdateIgnoresHostnameAddressChange(t *testing.T) {
+	old := withAddresses(baseNode("n1"), internalIP("10.0.0.1"), corev1.NodeAddress{Type: corev1.NodeHostName, Address: "a"})
+	newNode := withAddresses(baseNode("n1"), internalIP("10.0.0.1"), corev1.NodeAddress{Type: corev1.NodeHostName, Address: "b"})
+	if nodeChangedPredicate.Update(event.UpdateEvent{ObjectOld: old, ObjectNew: newNode}) {
+		t.Fatal("expected a Hostname address change to be filtered out")
+	}
+}
+
+func TestNodeChangedPredicate_UpdateIgnoresHeartbeatWithStableInternalIP(t *testing.T) {
+	old := withAddresses(baseNode("n1"), internalIP("10.0.0.1"))
+	newNode := withAddresses(baseNode("n1"), internalIP("10.0.0.1"))
+	newNode.Status.Conditions[0].LastHeartbeatTime = metav1.Now()
+	newNode.ResourceVersion = "999"
+	if nodeChangedPredicate.Update(event.UpdateEvent{ObjectOld: old, ObjectNew: newNode}) {
+		t.Fatal("expected a heartbeat-only update with an unchanged InternalIP to be filtered out")
+	}
+}
