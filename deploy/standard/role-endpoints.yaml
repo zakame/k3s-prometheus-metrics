@@ -1,8 +1,9 @@
 # Namespace-scoped counterpart to role.yaml's (generated) cluster-wide node
-# read access: the controller only ever writes EndpointSlice/Endpoints
-# objects in its configured --namespace (default kube-system), so this is a
-# Role, not a ClusterRole -- a compromised controller pod can't touch
-# endpoints/endpointslices in any other namespace.
+# read access: the controller only ever writes Service/EndpointSlice/
+# Endpoints objects in its configured --namespace (default kube-system), so
+# this is a Role, not a ClusterRole -- a compromised controller pod can't
+# touch them in any other namespace. delete is granted on endpointslices
+# only, to prune the -ipv6 slice once the last IPv6 node is gone.
 #
 # If you change the controller's --namespace flag, this Role (and its
 # RoleBinding in rolebinding-endpoints.yaml) must move to that namespace
@@ -17,7 +18,7 @@ metadata:
 rules:
 - apiGroups: ["discovery.k8s.io"]
   resources: ["endpointslices"]
-  verbs: ["get", "list", "watch", "create", "update"]
+  verbs: ["get", "list", "watch", "create", "update", "delete"]
 - apiGroups: [""]
   resources: ["endpoints", "services"]
   verbs: ["get", "list", "watch", "create", "update"]
