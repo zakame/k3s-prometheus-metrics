@@ -92,35 +92,73 @@ func boolPtrVal(t *testing.T, p *bool) bool {
 	return *p
 }
 
-// --- BuildEndpointSlices: node selection / skipping ----------------------
+// --- BuildEndpointSlices: node selection / empty emission -----------------
+// A service with no usable nodes still gets its IPv4 slice, empty, so an
+// existing slice is overwritten rather than left advertising stale IPs.
 
-func TestBuildEndpointSlices_NoNodes_ReturnsNil(t *testing.T) {
-	got := endpoints.BuildEndpointSlices(nil, testConfig())
-	if got != nil {
-		t.Fatalf("expected nil, got %#v", got)
+// assertOnlyEmptyIPv4Slice checks got is exactly one IPv4 slice named for
+// cfg's single service with a non-nil, empty endpoint list and the usual
+// labels and port.
+func assertOnlyEmptyIPv4Slice(t *testing.T, got []discoveryv1.EndpointSlice, cfg config.Config) {
+	t.Helper()
+	if len(got) != 1 {
+		t.Fatalf("expected exactly 1 (empty IPv4) slice, got %d: %+v", len(got), got)
+	}
+	es := got[0]
+	svc := cfg.Services[0]
+	if es.Name != svc.Name+"-metrics" || es.Namespace != cfg.Namespace {
+		t.Errorf("expected %s/%s-metrics, got %s/%s", cfg.Namespace, svc.Name, es.Namespace, es.Name)
+	}
+	if es.AddressType != discoveryv1.AddressTypeIPv4 {
+		t.Errorf("expected the empty slice to be IPv4, got %v", es.AddressType)
+	}
+	if es.Endpoints == nil {
+		t.Error("expected a non-nil empty Endpoints list (serialises as endpoints: []), got nil")
+	}
+	if len(es.Endpoints) != 0 {
+		t.Errorf("expected no endpoints, got %+v", es.Endpoints)
+	}
+	if es.Labels[discoveryv1.LabelServiceName] != svc.Name || es.Labels[discoveryv1.LabelManagedBy] != endpoints.ManagedByValue {
+		t.Errorf("expected service-name/managed-by labels on the empty slice, got %v", es.Labels)
+	}
+	if len(es.Ports) != 1 || es.Ports[0].Port == nil || *es.Ports[0].Port != svc.Port {
+		t.Errorf("expected the service port %d on the empty slice, got %+v", svc.Port, es.Ports)
 	}
 }
 
-func TestBuildEndpointSlices_NodeWithoutInternalIP_Skipped(t *testing.T) {
+func TestBuildEndpointSlices_NoNodes_EmitsEmptyIPv4Slice(t *testing.T) {
+	cfg := testConfig()
+	assertOnlyEmptyIPv4Slice(t, endpoints.BuildEndpointSlices(nil, cfg), cfg)
+}
+
+func TestBuildEndpointSlices_EmptyNodeList_EmitsEmptyIPv4Slice(t *testing.T) {
+	cfg := testConfig()
+	assertOnlyEmptyIPv4Slice(t, endpoints.BuildEndpointSlices(nodesFor(cfg, []corev1.Node{}), cfg), cfg)
+}
+
+func TestBuildEndpointSlices_NodeWithoutInternalIP_EmitsEmptyIPv4Slice(t *testing.T) {
 	cfg := testConfig()
 	nodes := []corev1.Node{
 		node("no-ip", "", withReadyCondition(corev1.ConditionTrue)),
 	}
-	got := endpoints.BuildEndpointSlices(nodesFor(cfg, nodes), cfg)
-	if got != nil {
-		t.Fatalf("expected nil when no node has a usable InternalIP, got %#v", got)
-	}
+	assertOnlyEmptyIPv4Slice(t, endpoints.BuildEndpointSlices(nodesFor(cfg, nodes), cfg), cfg)
 }
 
-func TestBuildEndpointSlices_NodeWithOnlyExternalIP_Skipped(t *testing.T) {
+func TestBuildEndpointSlices_NodeWithOnlyExternalIP_EmitsEmptyIPv4Slice(t *testing.T) {
 	n := corev1.Node{Name: "external-only"}
 	withExternalIP("203.0.113.1")(&n)
 	withReadyCondition(corev1.ConditionTrue)(&n)
 
 	cfg := testConfig()
-	got := endpoints.BuildEndpointSlices(nodesFor(cfg, []corev1.Node{n}), cfg)
-	if got != nil {
-		t.Fatalf("expected nil, node has no InternalIP address, got %#v", got)
+	assertOnlyEmptyIPv4Slice(t, endpoints.BuildEndpointSlices(nodesFor(cfg, []corev1.Node{n}), cfg), cfg)
+}
+
+func TestBuildEndpointSlices_NoNodes_NoIPv6Slice(t *testing.T) {
+	cfg := testConfig()
+	for _, es := range endpoints.BuildEndpointSlices(nil, cfg) {
+		if es.AddressType == discoveryv1.AddressTypeIPv6 {
+			t.Fatalf("expected no -ipv6 slice without IPv6 nodes (it would never be pruned), got %+v", es)
+		}
 	}
 }
 
@@ -299,24 +337,37 @@ func TestBuildEndpointSlices_DifferentNodeSetsPerService_NoCrossContamination(t 
 	}
 }
 
-// One service having zero qualifying nodes must not suppress the others'
-// slices (all-or-nothing -> per-service skip).
-func TestBuildEndpointSlices_ServiceWithNoQualifyingNodes_OnlyThatServiceSkipped(t *testing.T) {
+// One service having zero qualifying nodes must neither suppress the
+// others' slices nor drop its own: it gets an empty one, in config order.
+func TestBuildEndpointSlices_ServiceWithNoQualifyingNodes_GetsEmptySliceOthersUnaffected(t *testing.T) {
 	cfg := testConfig(
 		config.Service{Name: "svc-a", Port: 1111, Protocol: corev1.ProtocolTCP, AppProtocol: "http"},
 		config.Service{Name: "svc-b", Port: 2222, Protocol: corev1.ProtocolTCP, AppProtocol: "http"},
+		config.Service{Name: "svc-c", Port: 3333, Protocol: corev1.ProtocolTCP, AppProtocol: "http"},
 	)
 	nodesByService := map[string][]corev1.Node{
 		"svc-a": {node("n1", "10.0.0.1", withReadyCondition(corev1.ConditionTrue))},
 		// svc-b: absent -- e.g. its selector currently matches zero nodes.
+		"svc-c": {node("n1", "10.0.0.1", withReadyCondition(corev1.ConditionTrue))},
 	}
 
 	got := endpoints.BuildEndpointSlices(nodesByService, cfg)
-	if len(got) != 1 {
-		t.Fatalf("expected exactly 1 slice (svc-b has no qualifying nodes), got %d: %+v", len(got), got)
+	if len(got) != 3 {
+		t.Fatalf("expected 3 slices (one per service, svc-b's empty), got %d: %+v", len(got), got)
 	}
-	if got[0].Name != "svc-a-metrics" {
-		t.Fatalf("expected the surviving slice to be svc-a-metrics, got %q", got[0].Name)
+	for i, want := range []string{"svc-a-metrics", "svc-b-metrics", "svc-c-metrics"} {
+		if got[i].Name != want {
+			t.Errorf("slice %d: expected %q (config order), got %q", i, want, got[i].Name)
+		}
+	}
+	if len(got[0].Endpoints) != 1 || len(got[2].Endpoints) != 1 {
+		t.Errorf("expected svc-a and svc-c to keep their node, got %+v / %+v", got[0].Endpoints, got[2].Endpoints)
+	}
+	if got[1].Endpoints == nil || len(got[1].Endpoints) != 0 {
+		t.Errorf("expected svc-b to get a non-nil empty endpoint list, got %#v", got[1].Endpoints)
+	}
+	if got[1].Labels[discoveryv1.LabelServiceName] != "svc-b" || *got[1].Ports[0].Port != 2222 {
+		t.Errorf("expected svc-b's empty slice to keep its own label/port, got %v %+v", got[1].Labels, got[1].Ports)
 	}
 }
 
@@ -445,21 +496,32 @@ func TestBuildEndpointSlices_MultipleInternalIPs_FirstOneWins(t *testing.T) {
 // its single declared AddressType, so a mixed IPv4/IPv6 node set must split
 // into separate slices rather than mislabeling one family as the other.)
 
-func TestBuildEndpointSlices_IPv6OnlyNode_ProducesIPv6Slice(t *testing.T) {
+// An IPv6-only node set still emits the (empty) IPv4 slice alongside the
+// populated -ipv6 one, since the IPv4 slice is unconditional.
+func TestBuildEndpointSlices_IPv6OnlyNode_ProducesIPv6SliceAndEmptyIPv4Slice(t *testing.T) {
 	cfg := testConfig()
 	n := node("ipv6-node", "2001:db8::1", withReadyCondition(corev1.ConditionTrue))
 	got := endpoints.BuildEndpointSlices(nodesFor(cfg, []corev1.Node{n}), cfg)
-	if len(got) != 1 {
-		t.Fatalf("expected 1 slice for an IPv6-only node set, got %d", len(got))
+	if len(got) != 2 {
+		t.Fatalf("expected 2 slices (empty IPv4 + IPv6) for an IPv6-only node set, got %d: %+v", len(got), got)
 	}
-	if got[0].AddressType != discoveryv1.AddressTypeIPv6 {
-		t.Fatalf("expected AddressType IPv6, got %v", got[0].AddressType)
+
+	v4, v6 := got[0], got[1]
+	if v4.AddressType != discoveryv1.AddressTypeIPv4 || v4.Name != "test-svc-metrics" {
+		t.Fatalf("expected the IPv4 slice first (sorted by family), got %s/%v", v4.Name, v4.AddressType)
 	}
-	if got[0].Name != "test-svc-metrics-ipv6" {
-		t.Fatalf("expected IPv6 slice name to carry an -ipv6 suffix, got %q", got[0].Name)
+	if v4.Endpoints == nil || len(v4.Endpoints) != 0 {
+		t.Errorf("expected the IPv4 slice to be non-nil and empty, got %#v", v4.Endpoints)
 	}
-	if got[0].Endpoints[0].Addresses[0] != "2001:db8::1" {
-		t.Fatalf("expected the IPv6 address to be preserved, got %v", got[0].Endpoints[0].Addresses)
+
+	if v6.AddressType != discoveryv1.AddressTypeIPv6 {
+		t.Fatalf("expected AddressType IPv6, got %v", v6.AddressType)
+	}
+	if v6.Name != "test-svc-metrics-ipv6" {
+		t.Fatalf("expected IPv6 slice name to carry an -ipv6 suffix, got %q", v6.Name)
+	}
+	if len(v6.Endpoints) != 1 || v6.Endpoints[0].Addresses[0] != "2001:db8::1" {
+		t.Fatalf("expected the IPv6 address to be preserved, got %v", v6.Endpoints)
 	}
 }
 
