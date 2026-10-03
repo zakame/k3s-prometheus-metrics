@@ -22,20 +22,44 @@ func addrByIP(t *testing.T, addrs []corev1.EndpointAddress, ip string) corev1.En
 	return corev1.EndpointAddress{}
 }
 
-func TestBuildEndpoints_NoNodes_ReturnsNil(t *testing.T) {
-	got := endpoints.BuildEndpoints(nil, testConfig()) //nolint:staticcheck
-	if got != nil {
-		t.Fatalf("expected nil, got %#v", got)
+// assertOnlySubsetlessEndpoints checks got is exactly one Endpoints for
+// cfg's single service with nil Subsets (a subset with no addresses is
+// invalid) and the usual labels, so an existing object's stale subsets
+// are cleared rather than left in place.
+func assertOnlySubsetlessEndpoints(t *testing.T, got []corev1.Endpoints, cfg config.Config) { //nolint:staticcheck
+	t.Helper()
+	if len(got) != 1 {
+		t.Fatalf("expected exactly 1 Endpoints object, got %d: %+v", len(got), got)
+	}
+	eps := got[0]
+	svc := cfg.Services[0]
+	if eps.Name != svc.Name || eps.Namespace != cfg.Namespace {
+		t.Errorf("expected %s/%s, got %s/%s", cfg.Namespace, svc.Name, eps.Namespace, eps.Name)
+	}
+	if eps.Subsets != nil {
+		t.Errorf("expected nil Subsets with no addresses, got %+v", eps.Subsets)
+	}
+	if eps.Labels[discoveryv1.LabelServiceName] != svc.Name ||
+		eps.Labels["app.kubernetes.io/managed-by"] != endpoints.ManagedByValue ||
+		eps.Labels[discoveryv1.LabelSkipMirror] != "true" {
+		t.Errorf("expected service-name/managed-by/skip-mirror labels on the empty Endpoints, got %v", eps.Labels)
 	}
 }
 
-func TestBuildEndpoints_NodeWithoutInternalIP_Skipped(t *testing.T) {
+func TestBuildEndpoints_NoNodes_EmitsSubsetlessEndpoints(t *testing.T) {
+	cfg := testConfig()
+	assertOnlySubsetlessEndpoints(t, endpoints.BuildEndpoints(nil, cfg), cfg) //nolint:staticcheck
+}
+
+func TestBuildEndpoints_EmptyNodeList_EmitsSubsetlessEndpoints(t *testing.T) {
+	cfg := testConfig()
+	assertOnlySubsetlessEndpoints(t, endpoints.BuildEndpoints(nodesFor(cfg, []corev1.Node{}), cfg), cfg) //nolint:staticcheck
+}
+
+func TestBuildEndpoints_NodeWithoutInternalIP_EmitsSubsetlessEndpoints(t *testing.T) {
 	cfg := testConfig()
 	nodes := []corev1.Node{node("no-ip", "", withReadyCondition(corev1.ConditionTrue))}
-	got := endpoints.BuildEndpoints(nodesFor(cfg, nodes), cfg) //nolint:staticcheck
-	if got != nil {
-		t.Fatalf("expected nil when no node has a usable InternalIP, got %#v", got)
-	}
+	assertOnlySubsetlessEndpoints(t, endpoints.BuildEndpoints(nodesFor(cfg, nodes), cfg), cfg) //nolint:staticcheck
 }
 
 func TestBuildEndpoints_ReadyNode_InAddresses(t *testing.T) {
@@ -199,22 +223,35 @@ func TestBuildEndpoints_DifferentNodeSetsPerService_NoCrossContamination(t *test
 	}
 }
 
-func TestBuildEndpoints_ServiceWithNoQualifyingNodes_OnlyThatServiceSkipped(t *testing.T) {
+func TestBuildEndpoints_ServiceWithNoQualifyingNodes_GetsSubsetlessEndpointsOthersUnaffected(t *testing.T) {
 	cfg := testConfig(
 		config.Service{Name: "svc-a", Port: 1111, Protocol: corev1.ProtocolTCP, AppProtocol: "http"},
 		config.Service{Name: "svc-b", Port: 2222, Protocol: corev1.ProtocolTCP, AppProtocol: "http"},
+		config.Service{Name: "svc-c", Port: 3333, Protocol: corev1.ProtocolTCP, AppProtocol: "http"},
 	)
 	nodesByService := map[string][]corev1.Node{
 		"svc-a": {node("n1", "10.0.0.1", withReadyCondition(corev1.ConditionTrue))},
 		// svc-b: absent -- e.g. its selector currently matches zero nodes.
+		"svc-c": {node("n1", "10.0.0.1", withReadyCondition(corev1.ConditionTrue))},
 	}
 
 	got := endpoints.BuildEndpoints(nodesByService, cfg) //nolint:staticcheck
-	if len(got) != 1 {
-		t.Fatalf("expected exactly 1 Endpoints object (svc-b has no qualifying nodes), got %d: %+v", len(got), got)
+	if len(got) != 3 {
+		t.Fatalf("expected 3 Endpoints objects (one per service, svc-b's subset-less), got %d: %+v", len(got), got)
 	}
-	if got[0].Name != "svc-a" {
-		t.Fatalf("expected the surviving object to be svc-a, got %q", got[0].Name)
+	for i, want := range []string{"svc-a", "svc-b", "svc-c"} {
+		if got[i].Name != want {
+			t.Errorf("object %d: expected %q (config order), got %q", i, want, got[i].Name)
+		}
+	}
+	if len(got[0].Subsets) != 1 || len(got[2].Subsets) != 1 {
+		t.Errorf("expected svc-a and svc-c to keep their subset, got %+v / %+v", got[0].Subsets, got[2].Subsets)
+	}
+	if got[1].Subsets != nil {
+		t.Errorf("expected svc-b to have nil Subsets, got %+v", got[1].Subsets)
+	}
+	if got[1].Labels[discoveryv1.LabelServiceName] != "svc-b" {
+		t.Errorf("expected svc-b's empty Endpoints to keep its own label, got %v", got[1].Labels)
 	}
 }
 

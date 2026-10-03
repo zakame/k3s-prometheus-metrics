@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 
 	"github.com/zakame/k3s-prometheus-metrics/internal/config"
 	"github.com/zakame/k3s-prometheus-metrics/internal/endpoints"
@@ -81,6 +82,24 @@ func TestBuildServices_AppProtocolMatchesConfig(t *testing.T) {
 	port := got[0].Spec.Ports[0]
 	if port.AppProtocol == nil || *port.AppProtocol != "https" {
 		t.Errorf("expected AppProtocol %q, got %v", "https", port.AppProtocol)
+	}
+}
+
+// TestBuildServices_TargetPortSetExplicitlyToPort guards the Service watch:
+// the API server defaults an unset targetPort to port, so leaving it unset
+// would make every reconcile see a diff, rewrite the Service, and trigger
+// itself again through the Service watch.
+func TestBuildServices_TargetPortSetExplicitlyToPort(t *testing.T) {
+	cfg := testConfig(
+		config.Service{Name: "kube-scheduler", PortName: "https-metrics", Port: 10259, Protocol: corev1.ProtocolTCP, AppProtocol: "https"},
+		config.Service{Name: "kube-proxy", PortName: "http-metrics", Port: 10249, Protocol: corev1.ProtocolTCP, AppProtocol: "http"},
+	)
+
+	for _, svc := range endpoints.BuildServices(cfg) {
+		port := svc.Spec.Ports[0]
+		if port.TargetPort.Type != intstr.Int || port.TargetPort.IntVal != port.Port {
+			t.Errorf("%s: expected TargetPort to be the integer %d, got %v", svc.Name, port.Port, port.TargetPort)
+		}
 	}
 }
 

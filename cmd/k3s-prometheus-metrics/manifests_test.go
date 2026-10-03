@@ -82,7 +82,11 @@ func TestGenerateManifests_WriteLegacyEndpointsIncludesEndpointsKind(t *testing.
 	}
 }
 
-func TestGenerateManifests_NoMatchingNodesProducesOnlyServices(t *testing.T) {
+// TestGenerateManifests_NoMatchingNodesProducesServicesAndEmptyEndpointSlices
+// mirrors the live controller: with no matching nodes, the Services and one
+// empty IPv4 EndpointSlice per service are still emitted, so applying the
+// output clears whatever a previous apply advertised.
+func TestGenerateManifests_NoMatchingNodesProducesServicesAndEmptyEndpointSlices(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(runtimeScheme).Build()
 
 	cfg := config.Config{
@@ -97,11 +101,17 @@ func TestGenerateManifests_NoMatchingNodesProducesOnlyServices(t *testing.T) {
 	}
 
 	out := buf.String()
-	if !strings.Contains(out, "kind: Service") {
-		t.Errorf("expected Service manifests even with no nodes, got:\n%s", out)
+	if got := strings.Count(out, "kind: Service\n"); got != len(config.DefaultServices) {
+		t.Errorf("expected %d Service manifests even with no nodes, got %d:\n%s", len(config.DefaultServices), got, out)
 	}
-	if strings.Contains(out, "kind: EndpointSlice") {
-		t.Errorf("expected no EndpointSlice manifests with no matching nodes, got:\n%s", out)
+	if got := strings.Count(out, "kind: EndpointSlice\n"); got != len(config.DefaultServices) {
+		t.Errorf("expected %d empty EndpointSlice manifests (one IPv4 slice per service), got %d:\n%s", len(config.DefaultServices), got, out)
+	}
+	if got := strings.Count(out, "endpoints: []\n"); got != len(config.DefaultServices) {
+		t.Errorf("expected every EndpointSlice to render an explicit empty endpoints list, got %d:\n%s", got, out)
+	}
+	if strings.Contains(out, "-ipv6") {
+		t.Errorf("expected no -ipv6 slice without IPv6 nodes, got:\n%s", out)
 	}
 }
 

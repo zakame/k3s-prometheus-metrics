@@ -19,8 +19,20 @@ func BuildEndpoints(nodesByService map[string][]corev1.Node, cfg config.Config) 
 	var all []corev1.Endpoints //nolint:staticcheck
 	for _, svc := range cfg.Services {
 		ready, notReady := splitByReadiness(nodesByService[svc.Name])
-		if len(ready) == 0 && len(notReady) == 0 {
-			continue
+		// A subset with no addresses is invalid, so an Endpoints with no
+		// nodes carries no subsets at all, which still clears stale ones.
+		var subsets []corev1.EndpointSubset //nolint:staticcheck
+		if len(ready) > 0 || len(notReady) > 0 {
+			subsets = []corev1.EndpointSubset{{ //nolint:staticcheck
+				Addresses:         ready,
+				NotReadyAddresses: notReady,
+				Ports: []corev1.EndpointPort{{
+					Name:        svc.PortName,
+					Port:        svc.Port,
+					Protocol:    svc.Protocol,
+					AppProtocol: &svc.AppProtocol,
+				}},
+			}}
 		}
 
 		all = append(all, corev1.Endpoints{ //nolint:staticcheck
@@ -34,16 +46,7 @@ func BuildEndpoints(nodesByService map[string][]corev1.Node, cfg config.Config) 
 				// into a second, conflicting EndpointSlice.
 				discoveryv1.LabelSkipMirror: "true",
 			},
-			Subsets: []corev1.EndpointSubset{{ //nolint:staticcheck
-				Addresses:         ready,
-				NotReadyAddresses: notReady,
-				Ports: []corev1.EndpointPort{{
-					Name:        svc.PortName,
-					Port:        svc.Port,
-					Protocol:    svc.Protocol,
-					AppProtocol: &svc.AppProtocol,
-				}},
-			}},
+			Subsets: subsets,
 		})
 	}
 	return all
