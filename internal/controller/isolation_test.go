@@ -255,6 +255,33 @@ func TestOwnedBy_DropsUnappliedServicesPreservingOrder(t *testing.T) {
 	}
 }
 
+// Reconcile keys prune on the full built list after calling ownedBy on
+// it, so ownedBy must not compact into its input's backing array.
+func TestOwnedBy_LeavesInputIntact(t *testing.T) {
+	svcs := map[string]corev1.Service{"alpha": {}, "charlie": {}}
+	slices := []discoveryv1.EndpointSlice{
+		{Name: "alpha-metrics", Labels: map[string]string{discoveryv1.LabelServiceName: "alpha"}},
+		{Name: "bravo-metrics", Labels: map[string]string{discoveryv1.LabelServiceName: "bravo"}},
+		{Name: "charlie-metrics", Labels: map[string]string{discoveryv1.LabelServiceName: "charlie"}},
+	}
+
+	kept := ownedBy(slices, svcs)
+
+	want := []string{"alpha-metrics", "bravo-metrics", "charlie-metrics"}
+	for i, name := range want {
+		if slices[i].Name != name {
+			t.Fatalf("input slice %d was overwritten: expected %q, got %q (full input now %+v)", i, name, slices[i].Name, slices)
+		}
+	}
+	if len(kept) != 2 {
+		t.Fatalf("expected 2 kept, got %+v", kept)
+	}
+	kept[0].Name = "mutated"
+	if slices[0].Name != "alpha-metrics" {
+		t.Fatal("expected the kept list not to share storage with the input")
+	}
+}
+
 func TestOwnedBy_NilInput_ReturnsEmpty(t *testing.T) {
 	if kept := ownedBy[discoveryv1.EndpointSlice](nil, map[string]corev1.Service{"alpha": {}}); len(kept) != 0 {
 		t.Fatalf("expected nothing kept from a nil input, got %+v", kept)

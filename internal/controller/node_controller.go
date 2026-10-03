@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
@@ -18,8 +20,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	"github.com/zakame/k3s-prometheus-metrics/internal/config"
 	"github.com/zakame/k3s-prometheus-metrics/internal/endpoints"
@@ -27,12 +31,22 @@ import (
 
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
 //
-// The reconciler also needs create;get;list;patch;update;watch on
-// "" /services, "" /endpoints (when --write-legacy-endpoints is set), and
-// discovery.k8s.io/endpointslices, all namespace-scoped to Config.Namespace
-// rather than cluster-wide like the nodes rule above. Not
+// The reconciler also needs create;get;list;update;watch on "" /services,
+// "" /endpoints (when --write-legacy-endpoints is set), and
+// discovery.k8s.io/endpointslices (plus delete, for pruning), all
+// namespace-scoped to Config.Namespace rather than cluster-wide like the
+// nodes rule above. Not
 // +kubebuilder:rbac markers: controller-gen only emits a single
 // cluster-wide ClusterRole, which can't express that scoping.
+
+// resyncInterval bounds how long drift the watches can't see (a legacy
+// Endpoints edit, a missed event) persists.
+const resyncInterval = 10 * time.Minute
+
+// reconcileKey is the one request every watched event maps to: Reconcile
+// recomputes everything regardless of which object changed, so distinct
+// keys would only queue redundant runs.
+var reconcileKey = reconcile.Request{Name: "nodes"}
 
 // NodeReconciler watches cluster Nodes and drives Service, EndpointSlice,
 // and (optionally) legacy Endpoints objects in Config.Namespace to reflect
@@ -68,11 +82,12 @@ func (r *NodeReconciler) Reconcile(ctx context.Context, _ ctrl.Request) (ctrl.Re
 	// and would suppress the requeue for every service.
 	svcs, svcErr := r.applyServices(ctx)
 
-	slices := ownedBy(endpoints.BuildEndpointSlices(nodesByService, r.Config), svcs)
-	if err := r.ownEndpointSlices(slices, svcs); err != nil {
+	built := endpoints.BuildEndpointSlices(nodesByService, r.Config)
+	want := ownedBy(built, svcs)
+	if err := r.ownEndpointSlices(want, svcs); err != nil {
 		return ctrl.Result{}, errors.Join(svcErr, err)
 	}
-	sliceErr := r.applyEndpointSlices(ctx, slices)
+	sliceErr := errors.Join(r.applyEndpointSlices(ctx, want), r.pruneEndpointSlices(ctx, built))
 
 	epsCount := 0
 	var epsErr error
@@ -88,8 +103,8 @@ func (r *NodeReconciler) Reconcile(ctx context.Context, _ ctrl.Request) (ctrl.Re
 	if err := errors.Join(svcErr, sliceErr, epsErr); err != nil {
 		return ctrl.Result{}, err
 	}
-	logger.V(1).Info("reconciled endpoints", "endpointSlices", len(slices), "legacyEndpoints", epsCount)
-	return ctrl.Result{}, nil
+	logger.V(1).Info("reconciled endpoints", "endpointSlices", len(want), "legacyEndpoints", epsCount)
+	return ctrl.Result{RequeueAfter: resyncInterval}, nil
 }
 
 // ListNodesByService lists nodes once per distinct node selector, then
@@ -152,14 +167,15 @@ func applyAll[T any, PT interface {
 	return applied, errors.Join(errs...)
 }
 
-// ownedBy drops objects whose service-name label has no applied Service,
-// so endpoints for a Service this controller couldn't apply are never
-// written against whatever object holds that name.
+// ownedBy returns the objects whose service-name label has an applied
+// Service, so endpoints for a Service this controller couldn't apply are
+// never written against whatever object holds that name. Allocates rather
+// than filtering in place: callers keep using objs afterwards.
 func ownedBy[T any, PT interface {
 	*T
 	client.Object
 }](objs []T, svcs map[string]corev1.Service) []T {
-	kept := objs[:0]
+	kept := make([]T, 0, len(objs))
 	for i := range objs {
 		if _, ok := svcs[PT(&objs[i]).GetLabels()[discoveryv1.LabelServiceName]]; ok {
 			kept = append(kept, objs[i])
@@ -230,6 +246,40 @@ func (r *NodeReconciler) applyEndpointSlices(ctx context.Context, want []discove
 	return err
 }
 
+// pruneEndpointSlices deletes managed slices in Config.Namespace whose
+// name the builder no longer produces, e.g. the -ipv6 slice once the last
+// IPv6 node is gone. Keyed on the full built set rather than the applied
+// one, so a Service that failed to apply this round doesn't lose its
+// slices over a transient error.
+func (r *NodeReconciler) pruneEndpointSlices(ctx context.Context, built []discoveryv1.EndpointSlice) error {
+	var existing discoveryv1.EndpointSliceList
+	if err := r.List(ctx, &existing, client.InNamespace(r.Config.Namespace),
+		client.MatchingLabels{discoveryv1.LabelManagedBy: endpoints.ManagedByValue}); err != nil {
+		return fmt.Errorf("listing managed endpointslices: %w", err)
+	}
+	keep := make(map[string]struct{}, len(built))
+	for i := range built {
+		keep[built[i].Name] = struct{}{}
+	}
+	logger := log.FromContext(ctx)
+	var errs []error
+	for i := range existing.Items {
+		es := &existing.Items[i]
+		if _, ok := keep[es.Name]; ok {
+			continue
+		}
+		// The list came from the cache; the UID precondition stops a stale
+		// entry from deleting a same-named slice created since.
+		err := r.Delete(ctx, es, client.Preconditions{UID: &es.UID})
+		if err := client.IgnoreNotFound(err); err != nil {
+			errs = append(errs, fmt.Errorf("deleting endpointslice %s/%s: %w", es.Namespace, es.Name, err))
+			continue
+		}
+		logger.V(1).Info("pruned endpointslice", "name", es.Name)
+	}
+	return errors.Join(errs...)
+}
+
 func (r *NodeReconciler) applyLegacyEndpoints(ctx context.Context, want []corev1.Endpoints) error { //nolint:staticcheck // SA1019: intentional legacy support for Kubernetes <1.33
 	c := r.Client
 	if r.LegacyClient != nil {
@@ -244,20 +294,29 @@ func (r *NodeReconciler) applyLegacyEndpoints(ctx context.Context, want []corev1
 	return err
 }
 
-// SetupWithManager wires the reconciler into mgr, watching Node objects.
-// Update events are filtered by nodeChangedPredicate to avoid a full
-// reconcile on every heartbeat.
+// SetupWithManager wires the reconciler into mgr. Every event maps to
+// reconcileKey: Node changes that matter (see nodeChangedPredicate), and
+// any change to the Services and EndpointSlices this controller manages,
+// so a deleted or hand-edited object is repaired without waiting for a
+// node to change. Legacy Endpoints aren't watched (not cached); the
+// resyncInterval requeue covers them.
 func (r *NodeReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	toKey := handler.EnqueueRequestsFromMapFunc(func(context.Context, client.Object) []reconcile.Request {
+		return []reconcile.Request{reconcileKey}
+	})
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&corev1.Node{}, builder.WithPredicates(nodeChangedPredicate)).
 		Named("node").
+		Watches(&corev1.Node{}, toKey, builder.WithPredicates(nodeChangedPredicate)).
+		Watches(&corev1.Service{}, toKey, builder.WithPredicates(r.managedServicePredicate())).
+		Watches(&discoveryv1.EndpointSlice{}, toKey, builder.WithPredicates(r.managedSlicePredicate())).
 		Complete(r)
 }
 
 // nodeChangedPredicate lets Create/Delete through unfiltered, but only
-// lets an Update through when schedulability, Ready, or labels changed --
-// labels matter too since Reconcile lists nodes by NodeSelector, so
-// relabeling a node's control-plane role must still trigger a reconcile.
+// lets an Update through when schedulability, Ready, labels, or InternalIP
+// addresses changed. Labels matter since Reconcile lists nodes by
+// NodeSelector, so relabeling a node's control-plane role must still
+// trigger a reconcile.
 var nodeChangedPredicate = predicate.Funcs{
 	UpdateFunc: func(e event.UpdateEvent) bool {
 		oldNode, okOld := e.ObjectOld.(*corev1.Node)
@@ -267,8 +326,49 @@ var nodeChangedPredicate = predicate.Funcs{
 		}
 		return oldNode.Spec.Unschedulable != newNode.Spec.Unschedulable ||
 			nodeReadyStatus(oldNode) != nodeReadyStatus(newNode) ||
-			!reflect.DeepEqual(oldNode.Labels, newNode.Labels)
+			!reflect.DeepEqual(oldNode.Labels, newNode.Labels) ||
+			!slices.Equal(internalIPs(oldNode), internalIPs(newNode))
 	},
+}
+
+// managedServicePredicate selects Services this controller manages, by
+// managed-by label or by name, so an unlabelled Service squatting on one of
+// its names still triggers a reconcile when it changes or goes away.
+func (r *NodeReconciler) managedServicePredicate() predicate.Predicate {
+	names := make(map[string]struct{}, len(r.Config.Services))
+	for _, svc := range r.Config.Services {
+		names[svc.Name] = struct{}{}
+	}
+	return predicate.NewPredicateFuncs(func(o client.Object) bool {
+		if o.GetNamespace() != r.Config.Namespace {
+			return false
+		}
+		if o.GetLabels()["app.kubernetes.io/managed-by"] == endpoints.ManagedByValue {
+			return true
+		}
+		_, ok := names[o.GetName()]
+		return ok
+	})
+}
+
+// managedSlicePredicate selects EndpointSlices in Config.Namespace carrying
+// this controller's managed-by label.
+func (r *NodeReconciler) managedSlicePredicate() predicate.Predicate {
+	return predicate.NewPredicateFuncs(func(o client.Object) bool {
+		return o.GetNamespace() == r.Config.Namespace &&
+			o.GetLabels()[discoveryv1.LabelManagedBy] == endpoints.ManagedByValue
+	})
+}
+
+func internalIPs(node *corev1.Node) []string {
+	var ips []string
+	for _, a := range node.Status.Addresses {
+		if a.Type == corev1.NodeInternalIP {
+			ips = append(ips, a.Address)
+		}
+	}
+	slices.Sort(ips)
+	return ips
 }
 
 func nodeReadyStatus(node *corev1.Node) corev1.ConditionStatus {
