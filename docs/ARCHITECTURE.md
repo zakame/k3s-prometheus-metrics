@@ -12,10 +12,17 @@ and organized as:
 - `cmd/k3s-prometheus-metrics/`: entrypoint, manager wiring, leader
   election, and CLI flags. Its `manifests` subcommand is a one-shot
   alternative entrypoint: no manager, just a plain client and stdout.
-- `internal/controller/`: the Node watcher/reconciler. Reacts to Node
-  add/update/delete events and readiness changes, and drives Service,
-  EndpointSlice, and (optionally) Endpoints objects to match current
-  control-plane node state, setting a controller `ownerReference` from each
+- `internal/controller/`: the reconciler. Every event it watches (Node
+  add/delete, Node updates to readiness, schedulability, labels, or
+  InternalIP, and changes to its own Services/EndpointSlices) maps to one
+  queue key, and it recomputes everything on each run, requeuing itself
+  every 10 minutes as a safety net. It drives Service, EndpointSlice, and
+  (optionally) Endpoints objects to match current control-plane node
+  state, pruning managed EndpointSlices the builders no longer produce
+  (the `-ipv6` slice after the last IPv6 node leaves, or a service dropped
+  from the config table, whose Service and legacy Endpoints are left for
+  the operator), and sets a
+  controller `ownerReference` from each
   EndpointSlice/Endpoints back to its Service. An `ownerReference` is
   Kubernetes's built-in parent/child link for garbage collection: when the
   owner (the Service) is deleted, the API server automatically deletes
@@ -33,7 +40,9 @@ and organized as:
   dual-stack cluster (one where nodes have both an IPv4 and an IPv6
   address) gets a separate `<service>-metrics-ipv6` EndpointSlice alongside
   the IPv4 one, since a single EndpointSlice's `AddressType` can't mix
-  families.
+  families. The IPv4 slice and the legacy Endpoints are always emitted,
+  empty when a service has no usable nodes, so stale addresses are cleared
+  rather than left behind.
 - `internal/manifest/`: pure functions that stamp `TypeMeta` and render
   Service/EndpointSlice/Endpoints objects as multi-document YAML, for the
   `manifests` subcommand. No API dependency, same pattern as
