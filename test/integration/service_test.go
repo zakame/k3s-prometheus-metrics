@@ -43,7 +43,8 @@ func TestReconcile_CreatesSelectorLessService(t *testing.T) {
 // TestReconcile_ServiceCreatedEvenWithNoMatchingNodes proves the Service
 // itself doesn't depend on any node currently matching the selector: a
 // ServiceMonitor targets the Service, which must exist independently of
-// whether any control-plane node happens to be present right now.
+// whether any control-plane node happens to be present right now. The
+// EndpointSlice exists too, empty, and already owned by the Service.
 func TestReconcile_ServiceCreatedEvenWithNoMatchingNodes(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), reconcileTimeout)
 	defer cancel()
@@ -55,10 +56,14 @@ func TestReconcile_ServiceCreatedEvenWithNoMatchingNodes(t *testing.T) {
 	cfg := svcConfig(id, cpLabel)
 	reconcile(t, ctx, cfg)
 
-	_ = getService(t, ctx, id) // must exist
+	svc := getService(t, ctx, id) // must exist
 
-	if err := getEndpointSliceErr(ctx, id+"-metrics"); !isNotFound(err) {
-		t.Fatalf("expected no EndpointSlice (no matching nodes), got err=%v", err)
+	es := getEndpointSlice(t, ctx, id+"-metrics")
+	if len(es.Endpoints) != 0 {
+		t.Fatalf("expected an empty EndpointSlice (no matching nodes), got %+v", es.Endpoints)
+	}
+	if ref := ownerRefTo(t, es.OwnerReferences, svc); ref.UID != svc.UID {
+		t.Fatalf("expected the empty slice owned by the Service (UID %s), got %+v", svc.UID, es.OwnerReferences)
 	}
 }
 
