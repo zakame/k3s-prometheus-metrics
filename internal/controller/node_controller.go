@@ -248,9 +248,9 @@ func (r *NodeReconciler) applyEndpointSlices(ctx context.Context, want []discove
 
 // pruneEndpointSlices deletes managed slices in Config.Namespace whose
 // name the builder no longer produces, e.g. the -ipv6 slice once the last
-// IPv6 node is gone. Keyed on the full built set rather than the applied
-// one, so a Service that failed to apply this round doesn't lose its
-// slices over a transient error.
+// IPv6-primary node is gone. Keyed on the full built set rather than the
+// applied one, so a Service that failed to apply this round doesn't lose
+// its slices over a transient error.
 func (r *NodeReconciler) pruneEndpointSlices(ctx context.Context, built []discoveryv1.EndpointSlice) error {
 	var existing discoveryv1.EndpointSliceList
 	if err := r.List(ctx, &existing, client.InNamespace(r.Config.Namespace),
@@ -360,8 +360,8 @@ func (r *NodeReconciler) managedSlicePredicate() predicate.Predicate {
 	})
 }
 
-// internalIPs keeps address order: the builders use the first InternalIP,
-// so a reorder changes the desired state too.
+// internalIPs keeps address order: the builders use the first valid
+// InternalIP, so a reorder changes the desired state too.
 func internalIPs(node *corev1.Node) []string {
 	var ips []string
 	for _, a := range node.Status.Addresses {
