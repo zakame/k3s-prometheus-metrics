@@ -249,3 +249,20 @@ func getLegacyEndpoints(t *testing.T, ctx context.Context, name string) *corev1.
 func isNotFound(err error) bool { return apierrors.IsNotFound(err) }
 
 const reconcileTimeout = 10 * time.Second
+
+// setNodeInternalIPs replaces the node's addresses with InternalIPs in the
+// given order, the first being its primary.
+func setNodeInternalIPs(t *testing.T, ctx context.Context, name string, ips ...string) {
+	t.Helper()
+	var n corev1.Node
+	if err := k8sClient.Get(ctx, types.NamespacedName{Name: name}, &n); err != nil {
+		t.Fatalf("getting node %s: %v", name, err)
+	}
+	n.Status.Addresses = nil
+	for _, ip := range ips {
+		n.Status.Addresses = append(n.Status.Addresses, corev1.NodeAddress{Type: corev1.NodeInternalIP, Address: ip})
+	}
+	if err := k8sClient.Status().Update(ctx, &n); err != nil {
+		t.Fatalf("updating InternalIPs on node %s: %v", name, err)
+	}
+}
