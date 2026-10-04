@@ -4,8 +4,9 @@
 package endpoints
 
 import (
-	"net"
+	"net/netip"
 	slices0 "slices"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
@@ -27,7 +28,8 @@ const (
 // EndpointSlice objects in cfg.Namespace: one per (service, address
 // family) pair, since AddressType can't mix IPv4/IPv6. The IPv4 slice is
 // always emitted, empty if need be, so a service whose nodes all left
-// stops advertising them; the IPv6 one only exists while IPv6 nodes do.
+// stops advertising them; the IPv6 one only exists while IPv6-primary
+// nodes do.
 func BuildEndpointSlices(nodesByService map[string][]corev1.Node, cfg config.Config) []discoveryv1.EndpointSlice {
 	var slices []discoveryv1.EndpointSlice
 	for _, svc := range cfg.Services {
@@ -79,6 +81,7 @@ func BuildEndpointSlices(nodesByService map[string][]corev1.Node, cfg config.Con
 // EndpointSlice to match its single declared AddressType.
 func endpointsFromNodes(nodes []corev1.Node) map[discoveryv1.AddressType][]discoveryv1.Endpoint {
 	byFamily := map[discoveryv1.AddressType][]discoveryv1.Endpoint{}
+	nodes = sortedByName(nodes)
 	for i := range nodes {
 		node := &nodes[i]
 		addr, ok := internalIP(node)
@@ -101,19 +104,40 @@ func endpointsFromNodes(nodes []corev1.Node) map[discoveryv1.AddressType][]disco
 	return byFamily
 }
 
+// internalIP returns node's first InternalIP that EndpointSlice validation
+// accepts, canonicalized: Node status allows forms like "::ffff:10.0.0.1"
+// or 127.0.0.1 that would fail the whole slice. Only the first, so a
+// dual-stack node isn't scraped twice.
 func internalIP(node *corev1.Node) (string, bool) {
 	for _, a := range node.Status.Addresses {
-		if a.Type == corev1.NodeInternalIP {
-			return a.Address, true
+		if a.Type != corev1.NodeInternalIP {
+			continue
 		}
+		addr, err := netip.ParseAddr(a.Address)
+		if err != nil || addr.Zone() != "" {
+			continue
+		}
+		addr = addr.Unmap()
+		if addr.IsUnspecified() || addr.IsLoopback() || addr.IsLinkLocalUnicast() || addr.IsLinkLocalMulticast() {
+			continue
+		}
+		return addr.String(), true
 	}
 	return "", false
+}
+
+// sortedByName copies and sorts nodes: cached Lists come back in map
+// order, which would otherwise rewrite the objects.
+func sortedByName(nodes []corev1.Node) []corev1.Node {
+	nodes = slices0.Clone(nodes)
+	slices0.SortFunc(nodes, func(a, b corev1.Node) int { return strings.Compare(a.Name, b.Name) })
+	return nodes
 }
 
 // addressFamily reports the discovery.k8s.io/v1 AddressType matching addr's
 // actual IP family, rather than assuming IPv4.
 func addressFamily(addr string) discoveryv1.AddressType {
-	if ip := net.ParseIP(addr); ip != nil && ip.To4() == nil {
+	if ip, err := netip.ParseAddr(addr); err == nil && ip.Is6() {
 		return discoveryv1.AddressTypeIPv6
 	}
 	return discoveryv1.AddressTypeIPv4
