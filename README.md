@@ -246,9 +246,10 @@ your host.
 Re-running and re-applying does empty a service's EndpointSlice once its
 node set drops to zero, since the output always includes that slice. It
 can't remove an object the output no longer contains, such as a `-ipv6`
-slice after the last IPv6 node left. Prune by label for that. Service and
-(legacy) Endpoints carry `app.kubernetes.io/managed-by`. EndpointSlice
-carries a different label, `endpointslice.kubernetes.io/managed-by`.
+slice after the last IPv6-primary node left. Prune by label for that.
+Service and (legacy) Endpoints carry `app.kubernetes.io/managed-by`.
+EndpointSlice carries a different label,
+`endpointslice.kubernetes.io/managed-by`.
 Pruning both kinds takes two commands:
 
 ```bash
@@ -381,7 +382,7 @@ it needs rather than one broad grant:
   `discovery.k8s.io` `endpointslices` and core `endpoints`/`services` --
   the latter for the selector-less Services the controller creates -- plus
   `delete` on `endpointslices` only, to prune the `-ipv6` slice once no
-  IPv6 node remains. No `patch` verb: the controller only ever does
+  IPv6-primary node remains. No `patch` verb: the controller only ever does
   read-then-create-or-update, never a partial patch. If you change
   `--namespace`, this Role and RoleBinding must move to that namespace too.
   Hand-maintained rather than generated, since
@@ -411,14 +412,15 @@ kubectl get endpointslices -n kube-system -l endpointslice.kubernetes.io/managed
 
 should list one EndpointSlice per service (`kube-scheduler-metrics`,
 `kube-controller-manager-metrics`, `kube-proxy-metrics`), plus a
-`-ipv6` sibling for each service with IPv6 nodes. Each has one endpoint
-address per matching node -- control-plane nodes only for
-kube-scheduler/kube-controller-manager, every node for kube-proxy. A
-service with no matching nodes keeps an empty slice rather than a stale
-one; the `-ipv6` slice is deleted once no IPv6 node remains. Run one
-controller per namespace: pruning removes every EndpointSlice in the
-namespace carrying this controller's managed-by label that its own
-configuration doesn't produce, so two instances with different service
+`-ipv6` sibling for each service with IPv6-primary nodes. Each has one
+endpoint address per matching node, its first valid InternalIP (so a
+dual-stack node appears once; a node with none is left out) --
+control-plane nodes only for kube-scheduler/kube-controller-manager,
+every node for kube-proxy. A service with no matching nodes keeps an
+empty slice rather than a stale one; the `-ipv6` slice is deleted once
+no IPv6-primary node remains. Run one controller per namespace: pruning
+removes every EndpointSlice in the namespace carrying this controller's
+managed-by label that its own configuration doesn't produce, so two instances with different service
 sets would delete each other's slices.
 
 From there, check
