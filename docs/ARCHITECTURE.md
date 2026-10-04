@@ -19,9 +19,9 @@ and organized as:
   every 10 minutes as a safety net. It drives Service, EndpointSlice, and
   (optionally) Endpoints objects to match current control-plane node
   state, pruning managed EndpointSlices the builders no longer produce
-  (the `-ipv6` slice after the last IPv6 node leaves, or a service dropped
-  from the config table, whose Service and legacy Endpoints are left for
-  the operator), and sets a
+  (the `-ipv6` slice after the last IPv6-primary node leaves, or a
+  service dropped from the config table, whose Service and legacy
+  Endpoints are left for the operator), and sets a
   controller `ownerReference` from each
   EndpointSlice/Endpoints back to its Service. An `ownerReference` is
   Kubernetes's built-in parent/child link for garbage collection: when the
@@ -35,14 +35,14 @@ and organized as:
 - `internal/endpoints/`: pure, unit-testable builder functions that turn
   `internal/config`'s service table into selector-less Service objects, and
   a set of control-plane nodes into matching `discovery.k8s.io/v1`
-  EndpointSlice objects (and, optionally, legacy `v1` Endpoints). Nodes are
-  split by their InternalIP's address family (IPv4 vs. IPv6), so a
-  dual-stack cluster (one where nodes have both an IPv4 and an IPv6
-  address) gets a separate `<service>-metrics-ipv6` EndpointSlice alongside
-  the IPv4 one, since a single EndpointSlice's `AddressType` can't mix
-  families. The IPv4 slice and the legacy Endpoints are always emitted,
-  empty when a service has no usable nodes, so stale addresses are cleared
-  rather than left behind.
+  EndpointSlice objects (and, optionally, legacy `v1` Endpoints). Each
+  node is listed once, at its first valid InternalIP, so a dual-stack node
+  isn't scraped twice; nodes whose first valid InternalIP is IPv6 go in a
+  separate `<service>-metrics-ipv6` EndpointSlice, since a single
+  EndpointSlice's `AddressType` can't mix families. Nodes are sorted by
+  name, since cached Lists come back in arbitrary order. The IPv4 slice
+  and the legacy Endpoints are always emitted, empty when a service has
+  no usable nodes, so stale addresses are cleared rather than left behind.
 - `internal/manifest/`: pure functions that stamp `TypeMeta` and render
   Service/EndpointSlice/Endpoints objects as multi-document YAML, for the
   `manifests` subcommand. No API dependency, same pattern as
