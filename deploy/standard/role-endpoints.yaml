@@ -3,7 +3,7 @@
 # Endpoints objects in its configured --namespace (default kube-system), so
 # this is a Role, not a ClusterRole -- a compromised controller pod can't
 # touch them in any other namespace. delete is granted on endpointslices
-# only, to prune the -ipv6 slice once the last IPv6 node is gone.
+# only, to prune the -ipv6 slice once the last IPv6-primary node is gone.
 #
 # If you change the controller's --namespace flag, this Role (and its
 # RoleBinding in rolebinding-endpoints.yaml) must move to that namespace
