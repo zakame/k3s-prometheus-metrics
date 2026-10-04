@@ -457,11 +457,11 @@ func TestReconcile_Idempotent_ServiceNoAPIWriteOnUnchangedState(t *testing.T) {
 	}
 }
 
-// TestReconcile_DualStackNodes_BothSlicesOwnedBySameService proves the
+// TestReconcile_MixedFamilyNodes_BothSlicesOwnedBySameService proves the
 // per-address-family split in BuildEndpointSlices doesn't break
 // ownership: both the IPv4 and the "-ipv6" slice for one service must
 // carry an ownerReference to the same single Service.
-func TestReconcile_DualStackNodes_BothSlicesOwnedBySameService(t *testing.T) {
+func TestReconcile_MixedFamilyNodes_BothSlicesOwnedBySameService(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), reconcileTimeout)
 	defer cancel()
 

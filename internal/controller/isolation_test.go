@@ -376,7 +376,7 @@ func TestReconcile_OneServiceFailsToApply_OthersStillGetEndpointSlices(t *testin
 	}
 }
 
-func TestReconcile_DualStackNodes_FailedServiceLosesBothAddressFamilies(t *testing.T) {
+func TestReconcile_MixedFamilyNodes_FailedServiceLosesBothAddressFamilies(t *testing.T) {
 	boom := errors.New("boom")
 	c, sliceWrites, err := reconcileWithFailingServices(t, isoConfig(), boom, []string{"bravo"},
 		isoNode("v4", isoNodeIP), isoNode("v6", isoNodeIPv6))

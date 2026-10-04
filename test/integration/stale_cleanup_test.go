@@ -364,7 +364,7 @@ func (c countingClient) Delete(ctx context.Context, obj client.Object, opts ...c
 // TestReconcile_Converged_EchoReconcileMakesNoWrites guards the explicit
 // Service targetPort (the API server defaults it to port, so an unset
 // value looks like a diff every reconcile) and prune's no-op path: once
-// converged, a second reconcile over dual-stack nodes with legacy
+// converged, a second reconcile over mixed-family nodes with legacy
 // Endpoints on must perform zero writes of any kind.
 func TestReconcile_Converged_EchoReconcileMakesNoWrites(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), reconcileTimeout)

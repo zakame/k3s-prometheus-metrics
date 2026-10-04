@@ -151,7 +151,7 @@ func TestReconcile_Prune_DeletesStaleIPv6SliceWhenNoIPv6NodesRemain(t *testing.T
 	}
 }
 
-func TestReconcile_Prune_DualStackToIPv4Only_OnlyIPv6SliceGoes(t *testing.T) {
+func TestReconcile_Prune_MixedFamilyToIPv4Only_OnlyIPv6SliceGoes(t *testing.T) {
 	r, c, log := pruneFixture(t, isoConfig(), nil, isoNode("v4", isoNodeIP), isoNode("v6", isoNodeIPv6))
 	if _, err := r.Reconcile(context.Background(), ctrl.Request{}); err != nil {
 		t.Fatalf("first Reconcile: %v", err)
