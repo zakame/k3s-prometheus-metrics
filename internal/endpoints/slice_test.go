@@ -2,6 +2,7 @@ package endpoints_test
 
 import (
 	"reflect"
+	"slices"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -57,6 +58,13 @@ func withInternalIP(ip string) nodeOpt {
 	return func(n *corev1.Node) {
 		n.Status.Addresses = append(n.Status.Addresses,
 			corev1.NodeAddress{Type: corev1.NodeInternalIP, Address: ip})
+	}
+}
+
+func withHostname(name string) nodeOpt {
+	return func(n *corev1.Node) {
+		n.Status.Addresses = append(n.Status.Addresses,
+			corev1.NodeAddress{Type: corev1.NodeHostName, Address: name})
 	}
 }
 
@@ -491,7 +499,7 @@ func TestBuildEndpointSlices_MultipleInternalIPs_FirstOneWins(t *testing.T) {
 	}
 }
 
-// --- Dual-stack: nodes are grouped into per-address-family slices ---------
+// --- Mixed families: nodes are grouped into per-address-family slices -----
 // (discovery.k8s.io/v1 requires every address in an EndpointSlice to match
 // its single declared AddressType, so a mixed IPv4/IPv6 node set must split
 // into separate slices rather than mislabeling one family as the other.)
@@ -579,15 +587,202 @@ func TestBuildEndpointSlices_MultipleServicesWithMixedFamilies_OneSlicePerServic
 	}
 }
 
-func TestBuildEndpointSlices_UnparseableInternalIP_DefaultsToIPv4(t *testing.T) {
+func TestBuildEndpointSlices_OnlyUnparseableInternalIPs_NodeSkipped(t *testing.T) {
 	cfg := testConfig()
-	// Malformed but not empty -- internalIP() only checks presence, not
-	// validity, so addressFamily must degrade gracefully rather than panic.
-	n := node("garbage-ip", "not-an-ip-address", withReadyCondition(corev1.ConditionTrue))
-	got := endpoints.BuildEndpointSlices(nodesFor(cfg, []corev1.Node{n}), cfg)
-	if len(got) != 1 || got[0].AddressType != discoveryv1.AddressTypeIPv4 {
-		t.Fatalf("expected a single IPv4-defaulted slice for an unparseable address, got %+v", got)
+	// Node validation accepts "010.0.0.1"; netip doesn't.
+	for _, addr := range []string{"not-an-ip-address", " ", "010.0.0.1", "10.0.0.1/24", "fe80::1%eth0"} {
+		n := node("bad", addr, withReadyCondition(corev1.ConditionTrue))
+		assertOnlyEmptyIPv4Slice(t, endpoints.BuildEndpointSlices(nodesFor(cfg, []corev1.Node{n}), cfg), cfg)
 	}
+}
+
+func TestBuildEndpointSlices_UnparseableInternalIPBeforeValidOne_ValidOneIsPrimary(t *testing.T) {
+	cfg := testConfig()
+	n := node("n1", "garbage", withInternalIP(""), withInternalIP("2001:db8::7"), withInternalIP("10.0.0.7"),
+		withReadyCondition(corev1.ConditionTrue))
+	got := endpoints.BuildEndpointSlices(nodesFor(cfg, []corev1.Node{n}), cfg)
+	if len(got) != 2 {
+		t.Fatalf("expected the empty IPv4 slice plus the -ipv6 one, got %d: %+v", len(got), got)
+	}
+	if len(got[0].Endpoints) != 0 {
+		t.Errorf("expected the IPv4 slice empty (the node's primary valid InternalIP is IPv6), got %+v", got[0].Endpoints)
+	}
+	ep := endpointByNode(t, got[1].Endpoints, "n1")
+	if !reflect.DeepEqual(ep.Addresses, []string{"2001:db8::7"}) {
+		t.Errorf("expected the first valid InternalIP, got %v", ep.Addresses)
+	}
+}
+
+// specialIPs parse, but EndpointSlice and Endpoints validation reject them.
+var specialIPs = []string{"127.0.0.1", "0.0.0.0", "169.254.1.1", "224.0.0.1", "::1", "::", "fe80::1", "ff02::1", "::ffff:127.0.0.1"}
+
+func TestBuildEndpointSlices_SpecialInternalIPBeforeValidOne_ValidOneIsPrimary(t *testing.T) {
+	cfg := testConfig()
+	for _, special := range specialIPs {
+		n := node("n1", special, withInternalIP("10.0.0.7"), withReadyCondition(corev1.ConditionTrue))
+		got := endpoints.BuildEndpointSlices(nodesFor(cfg, []corev1.Node{n}), cfg)
+		if len(got) != 1 || len(got[0].Endpoints) != 1 || !reflect.DeepEqual(got[0].Endpoints[0].Addresses, []string{"10.0.0.7"}) {
+			t.Errorf("%s: expected only 10.0.0.7 in the IPv4 slice, got %+v", special, got)
+		}
+	}
+}
+
+// Node status accepts these forms but EndpointSlice validation rejects
+// them.
+func TestBuildEndpointSlices_NonCanonicalInternalIP_EmittedCanonical(t *testing.T) {
+	cfg := testConfig()
+	for _, tc := range []struct {
+		in, want string
+		family   discoveryv1.AddressType
+	}{
+		{"::ffff:10.0.0.1", "10.0.0.1", discoveryv1.AddressTypeIPv4},
+		{"2001:DB8::1", "2001:db8::1", discoveryv1.AddressTypeIPv6},
+		{"2001:0db8:0000:0000:0000:0000:0000:0001", "2001:db8::1", discoveryv1.AddressTypeIPv6},
+	} {
+		n := node("n1", tc.in, withReadyCondition(corev1.ConditionTrue))
+		got := endpoints.BuildEndpointSlices(nodesFor(cfg, []corev1.Node{n}), cfg)
+		var es *discoveryv1.EndpointSlice
+		for i := range got {
+			if got[i].AddressType == tc.family {
+				es = &got[i]
+			}
+		}
+		if es == nil || len(es.Endpoints) != 1 || !reflect.DeepEqual(es.Endpoints[0].Addresses, []string{tc.want}) {
+			t.Errorf("%s: expected %s in the %s slice, got %+v", tc.in, tc.want, tc.family, got)
+		}
+	}
+}
+
+func TestBuildEndpoints_NonCanonicalInternalIP_EmittedCanonical(t *testing.T) {
+	cfg := testConfig()
+	nodes := []corev1.Node{
+		node("a", "::ffff:10.0.0.1", withReadyCondition(corev1.ConditionTrue)),
+		node("b", "2001:DB8::1", withReadyCondition(corev1.ConditionTrue)),
+	}
+	got := endpoints.BuildEndpoints(nodesFor(cfg, nodes), cfg) //nolint:staticcheck
+	var ips []string
+	for _, a := range got[0].Subsets[0].Addresses {
+		ips = append(ips, a.IP)
+	}
+	if !reflect.DeepEqual(ips, []string{"10.0.0.1", "2001:db8::1"}) {
+		t.Errorf("expected canonical addresses, got %v", ips)
+	}
+}
+
+// --- Dual-stack nodes: advertised once, under the primary family ----------
+
+func TestBuildEndpointSlices_DualStackIPv4First_OnlyInIPv4Slice(t *testing.T) {
+	cfg := testConfig()
+	n := node("ds", "10.0.0.1", withInternalIP("2001:db8::1"), withReadyCondition(corev1.ConditionTrue))
+	got := endpoints.BuildEndpointSlices(nodesFor(cfg, []corev1.Node{n}), cfg)
+	if len(got) != 1 {
+		t.Fatalf("expected only the IPv4 slice (no -ipv6 slice for an IPv4-primary node), got %d: %+v", len(got), got)
+	}
+	ep := endpointByNode(t, got[0].Endpoints, "ds")
+	if !reflect.DeepEqual(ep.Addresses, []string{"10.0.0.1"}) {
+		t.Errorf("expected only the primary InternalIP, got %v", ep.Addresses)
+	}
+}
+
+func TestBuildEndpointSlices_DualStackIPv6First_OnlyInIPv6Slice(t *testing.T) {
+	cfg := testConfig()
+	n := node("ds", "2001:db8::1", withInternalIP("10.0.0.1"), withInternalIP("2001:db8::2"),
+		withReadyCondition(corev1.ConditionTrue))
+	got := endpoints.BuildEndpointSlices(nodesFor(cfg, []corev1.Node{n}), cfg)
+	if len(got) != 2 {
+		t.Fatalf("expected the empty IPv4 slice plus the -ipv6 one, got %d: %+v", len(got), got)
+	}
+	if len(got[0].Endpoints) != 0 {
+		t.Errorf("expected an IPv6-primary node kept out of the IPv4 slice, got %+v", got[0].Endpoints)
+	}
+	if got[1].Name != "test-svc-metrics-ipv6" || len(got[1].Endpoints) != 1 {
+		t.Fatalf("expected exactly one endpoint in test-svc-metrics-ipv6, got %s: %+v", got[1].Name, got[1].Endpoints)
+	}
+	if ep := got[1].Endpoints[0]; !reflect.DeepEqual(ep.Addresses, []string{"2001:db8::1"}) {
+		t.Errorf("expected only the first InternalIP, got %v", ep.Addresses)
+	}
+}
+
+func TestBuildEndpointSlices_NonInternalAddressesBeforeInternalIP_Ignored(t *testing.T) {
+	cfg := testConfig()
+	n := node("n1", "", withHostname("n1.example"), withExternalIP("2001:db8::99"), withExternalIP("203.0.113.9"),
+		withInternalIP("10.0.0.1"), withReadyCondition(corev1.ConditionTrue))
+	got := endpoints.BuildEndpointSlices(nodesFor(cfg, []corev1.Node{n}), cfg)
+	if len(got) != 1 {
+		t.Fatalf("expected only the IPv4 slice (an IPv6 ExternalIP isn't an InternalIP), got %d: %+v", len(got), got)
+	}
+	if ep := endpointByNode(t, got[0].Endpoints, "n1"); !reflect.DeepEqual(ep.Addresses, []string{"10.0.0.1"}) {
+		t.Errorf("expected the InternalIP, got %v", ep.Addresses)
+	}
+}
+
+// --- Input order independence --------------------------------------------
+
+// orderFixture mixes families, readiness, and names whose sort order
+// disagrees with their IPs' string and numeric order.
+func orderFixture() []corev1.Node {
+	return []corev1.Node{
+		node("c", "10.0.0.9", withReadyCondition(corev1.ConditionTrue)),
+		node("a", "10.0.0.10", withReadyCondition(corev1.ConditionFalse)),
+		node("e", "2001:db8::9", withReadyCondition(corev1.ConditionTrue)),
+		node("b", "2001:db8::10", withInternalIP("10.0.0.2"), cordoned()),
+		node("d", "10.0.0.1", withReadyCondition(corev1.ConditionTrue), withInternalIP("2001:db8::1")),
+	}
+}
+
+func permutations(nodes []corev1.Node) [][]corev1.Node {
+	if len(nodes) <= 1 {
+		return [][]corev1.Node{slices.Clone(nodes)}
+	}
+	var out [][]corev1.Node
+	for i := range nodes {
+		rest := slices.Concat(nodes[:i], nodes[i+1:])
+		for _, p := range permutations(rest) {
+			out = append(out, append([]corev1.Node{nodes[i]}, p...))
+		}
+	}
+	return out
+}
+
+func TestBuildEndpointSlices_IndependentOfInputNodeOrder(t *testing.T) {
+	cfg := testConfig(config.DefaultServices...)
+	want := endpoints.BuildEndpointSlices(nodesFor(cfg, orderFixture()), cfg)
+	for _, p := range permutations(orderFixture()) {
+		if got := endpoints.BuildEndpointSlices(nodesFor(cfg, p), cfg); !reflect.DeepEqual(got, want) {
+			t.Fatalf("output changed with input order %v:\nwant: %#v\ngot:  %#v", nodeNames(p), want, got)
+		}
+	}
+
+	for _, es := range want {
+		var names []string
+		for _, ep := range es.Endpoints {
+			names = append(names, *ep.NodeName)
+		}
+		if !slices.IsSorted(names) {
+			t.Errorf("%s: expected endpoints ordered by node name, got %v", es.Name, names)
+		}
+	}
+}
+
+// ListNodesByService hands the same slice to every service sharing a
+// selector, so sorting in place would reorder another caller's data.
+func TestBuildEndpointSlices_DoesNotReorderCallerNodes(t *testing.T) {
+	cfg := testConfig()
+	nodes := orderFixture()
+	before := nodeNames(nodes)
+	_ = endpoints.BuildEndpointSlices(nodesFor(cfg, nodes), cfg)
+	_ = endpoints.BuildEndpoints(nodesFor(cfg, nodes), cfg) //nolint:staticcheck
+	if after := nodeNames(nodes); !reflect.DeepEqual(before, after) {
+		t.Fatalf("builders reordered the caller's node slice: %v -> %v", before, after)
+	}
+}
+
+func nodeNames(nodes []corev1.Node) []string {
+	names := make([]string, len(nodes))
+	for i := range nodes {
+		names[i] = nodes[i].Name
+	}
+	return names
 }
 
 // --- Determinism / idempotency --------------------------------------------

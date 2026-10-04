@@ -2,6 +2,7 @@ package endpoints_test
 
 import (
 	"reflect"
+	"slices"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -397,5 +398,70 @@ func TestReadyClassification_ConsistentBetweenSliceAndLegacy(t *testing.T) {
 
 	if !reflect.DeepEqual(sliceReady, legacyReady) {
 		t.Fatalf("readiness classification diverged between builders:\nslice:  %#v\nlegacy: %#v", sliceReady, legacyReady)
+	}
+}
+
+func TestBuildEndpoints_DualStackNode_OnlyPrimaryInternalIP(t *testing.T) {
+	cfg := testConfig()
+	nodes := []corev1.Node{
+		node("v4-first", "10.0.0.1", withInternalIP("2001:db8::1"), withReadyCondition(corev1.ConditionTrue)),
+		node("v6-first", "2001:db8::2", withInternalIP("10.0.0.2"), withReadyCondition(corev1.ConditionTrue)),
+	}
+	got := endpoints.BuildEndpoints(nodesFor(cfg, nodes), cfg) //nolint:staticcheck
+	want := []string{"10.0.0.1", "2001:db8::2"}
+	var ips []string
+	for _, a := range got[0].Subsets[0].Addresses {
+		ips = append(ips, a.IP)
+	}
+	if !reflect.DeepEqual(ips, want) {
+		t.Fatalf("expected one address per node, its primary InternalIP, got %v", ips)
+	}
+}
+
+func TestBuildEndpoints_UnparseableInternalIPBeforeValidOne_ValidOneIsPrimary(t *testing.T) {
+	cfg := testConfig()
+	nodes := []corev1.Node{
+		node("n1", "not-an-ip", withInternalIP("10.0.0.1"), withReadyCondition(corev1.ConditionTrue)),
+		node("only-garbage", "010.0.0.2", withReadyCondition(corev1.ConditionFalse)),
+	}
+	got := endpoints.BuildEndpoints(nodesFor(cfg, nodes), cfg) //nolint:staticcheck
+	subset := got[0].Subsets[0]
+	if len(subset.Addresses) != 1 || subset.Addresses[0].IP != "10.0.0.1" {
+		t.Errorf("expected the valid InternalIP, got %+v", subset.Addresses)
+	}
+	if len(subset.NotReadyAddresses) != 0 {
+		t.Errorf("expected a node with no valid InternalIP skipped, got %+v", subset.NotReadyAddresses)
+	}
+}
+
+func TestBuildEndpoints_IndependentOfInputNodeOrder(t *testing.T) {
+	cfg := testConfig(config.DefaultServices...)
+	want := endpoints.BuildEndpoints(nodesFor(cfg, orderFixture()), cfg) //nolint:staticcheck
+	for _, p := range permutations(orderFixture()) {
+		if got := endpoints.BuildEndpoints(nodesFor(cfg, p), cfg); !reflect.DeepEqual(got, want) { //nolint:staticcheck
+			t.Fatalf("output changed with input order %v:\nwant: %#v\ngot:  %#v", nodeNames(p), want, got)
+		}
+	}
+
+	subset := want[0].Subsets[0]
+	for _, addrs := range [][]corev1.EndpointAddress{subset.Addresses, subset.NotReadyAddresses} {
+		var names []string
+		for _, a := range addrs {
+			names = append(names, *a.NodeName)
+		}
+		if !slices.IsSorted(names) {
+			t.Errorf("expected addresses ordered by node name, got %v", names)
+		}
+	}
+}
+
+func TestBuildEndpoints_SpecialInternalIPBeforeValidOne_ValidOneIsPrimary(t *testing.T) {
+	cfg := testConfig()
+	for _, special := range specialIPs {
+		n := node("n1", special, withInternalIP("2001:db8::7"), withReadyCondition(corev1.ConditionTrue))
+		got := endpoints.BuildEndpoints(nodesFor(cfg, []corev1.Node{n}), cfg) //nolint:staticcheck
+		if len(got[0].Subsets) != 1 || len(got[0].Subsets[0].Addresses) != 1 || got[0].Subsets[0].Addresses[0].IP != "2001:db8::7" {
+			t.Errorf("%s: expected only 2001:db8::7, got %+v", special, got[0].Subsets)
+		}
 	}
 }

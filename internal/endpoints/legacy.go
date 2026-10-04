@@ -55,6 +55,7 @@ func BuildEndpoints(nodesByService map[string][]corev1.Node, cfg config.Config) 
 // splitByReadiness splits nodes into ready/not-ready v1 EndpointAddresses,
 // per the same isReady rule EndpointSlice uses.
 func splitByReadiness(nodes []corev1.Node) (ready, notReady []corev1.EndpointAddress) {
+	nodes = sortedByName(nodes)
 	for i := range nodes {
 		node := &nodes[i]
 		addr, ok := internalIP(node)
