@@ -175,12 +175,11 @@ func TestGenerateManifests_CustomServiceNodeSelectorOverridesConfigDefault(t *te
 	}
 }
 
-// TestGenerateManifests_DualStackNodesProduceIPv4AndIPv6EndpointSlices
-// exercises the split-by-address-family path (internal/endpoints splits
-// dual-stack nodes into separate EndpointSlices per AddressType) all the
-// way through generateManifests and manifest.Render's ordering, not just
-// unit-tested in isolation.
-func TestGenerateManifests_DualStackNodesProduceIPv4AndIPv6EndpointSlices(t *testing.T) {
+// TestGenerateManifests_MixedFamilyNodesProduceIPv4AndIPv6EndpointSlices
+// exercises the split-by-address-family path (an IPv4 node and an IPv6
+// node land in separate EndpointSlices per AddressType) all the way
+// through generateManifests and manifest.Render's ordering.
+func TestGenerateManifests_MixedFamilyNodesProduceIPv4AndIPv6EndpointSlices(t *testing.T) {
 	labels := map[string]string{"node-role.kubernetes.io/control-plane": "true"}
 	ipv4Node := labeledNode("cp-v4", labels, "10.0.0.1", true)
 	ipv6Node := labeledNode("cp-v6", labels, "fd00::1", true)
